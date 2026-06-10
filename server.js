@@ -11,12 +11,72 @@ const PORT = process.env.PORT || 5730;
 const db = mysql.createPool({
   host: process.env.DB_HOST || 'localhost',
   user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASS || '',
+  password: process.env.DB_PASS || 'root123',
   database: process.env.DB_NAME || 'payments',
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0
 });
+
+// Initialize database tables
+async function initializeDatabase() {
+  try {
+    const connection = await db.getConnection();
+    
+    // Create tables
+    await connection.execute(`
+      CREATE TABLE IF NOT EXISTS transactions (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        sepay_id VARCHAR(255) UNIQUE NOT NULL COMMENT 'SePay transaction ID',
+        gateway VARCHAR(100) COMMENT 'Payment gateway',
+        transaction_date DATETIME,
+        account_number VARCHAR(100),
+        sub_account VARCHAR(100),
+        code VARCHAR(100) COMMENT 'Order/reference code',
+        amount_in DECIMAL(15, 2) DEFAULT 0 COMMENT 'Incoming amount',
+        amount_out DECIMAL(15, 2) DEFAULT 0 COMMENT 'Outgoing amount',
+        accumulated DECIMAL(15, 2),
+        content VARCHAR(500) COMMENT 'Transaction description',
+        reference_code VARCHAR(100),
+        body LONGTEXT COMMENT 'Raw webhook body',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_sepay_id (sepay_id),
+        INDEX idx_code (code),
+        INDEX idx_created_at (created_at)
+      )
+    `);
+    
+    await connection.execute(`
+      CREATE TABLE IF NOT EXISTS webhook_logs (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        transaction_id BIGINT NOT NULL UNIQUE COMMENT 'ID giao dịch SePay',
+        body JSON NOT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+    
+    await connection.execute(`
+      CREATE TABLE IF NOT EXISTS orders (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        code VARCHAR(100) UNIQUE NOT NULL,
+        amount DECIMAL(15, 2) NOT NULL,
+        status VARCHAR(50) DEFAULT 'pending',
+        paid_at TIMESTAMP NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_code (code),
+        INDEX idx_status (status)
+      )
+    `);
+    
+    connection.release();
+    console.log('✓ Database tables initialized successfully');
+  } catch (err) {
+    console.error('Database initialization error:', err);
+    process.exit(1);
+  }
+}
 
 // Middleware
 app.use(bodyParser.json());
@@ -211,7 +271,8 @@ app.use((req, res) => {
 });
 
 // Start server
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
+  await initializeDatabase();
   console.log(`
 ╔════════════════════════════════════════════════╗
 ║   Payment Callback Server Started             ║
