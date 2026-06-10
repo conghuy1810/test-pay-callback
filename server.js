@@ -22,9 +22,67 @@ const db = mysql.createPool({
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
+// SePay Configuration (set in .env)
+const SEPAY_ACCOUNT = process.env.SEPAY_ACCOUNT || '0010000000355';
+const SEPAY_BANK = process.env.SEPAY_BANK || 'Vietcombank';
+
 // Logs for callback requests (in-memory for non-webhook callbacks)
 const callbacks = [];
 
+// ============================================================================
+// ORDERS API - Create orders with QR codes
+// ============================================================================
+const ordersRouter = express.Router();
+
+ordersRouter.post('/', async (req, res) => {
+  try {
+    const idUser = req.body.idUser || null;
+    const amount = Number(req.body.amount) || 100000;
+
+    const code = 'DH' + idUser;
+    await db.execute(
+      'INSERT INTO orders (code, amount, status) VALUES (?, ?, ?)',
+      [code, amount, 'pending']
+    );
+
+    const qr = new URLSearchParams({
+      acc: SEPAY_ACCOUNT,
+      bank: SEPAY_BANK,
+      amount: String(amount),
+      des: code,
+    });
+
+    res.json({
+      code,
+      amount,
+      bank: SEPAY_BANK,
+      accountNumber: SEPAY_ACCOUNT,
+      qrUrl: `https://qr.sepay.vn/img?${qr}`,
+    });
+  } catch (err) {
+    console.error('Order creation error:', err);
+    res.status(500).json({ success: false, message: 'Failed to create order' });
+  }
+});
+
+ordersRouter.get('/:code/status', async (req, res) => {
+  try {
+    const [rows] = await db.execute(
+      'SELECT status FROM orders WHERE code = ?',
+      [req.params.code]
+    );
+    res.json({ status: rows[0]?.status ?? 'not_found' });
+  } catch (err) {
+    console.error('Status check error:', err);
+    res.status(500).json({ success: false, message: 'Failed to check status' });
+  }
+});
+
+app.use('/api/orders', ordersRouter);
+
+// ============================================================================
+// HEALTH CHECK
+// ============================================================================
 // Health check endpoint
 app.get('/health', (req, res) => {
   res.json({ ok: true, timestamp: new Date().toISOString() });
@@ -159,12 +217,13 @@ app.listen(PORT, () => {
 ║   Payment Callback Server Started             ║
 ╠════════════════════════════════════════════════╣
 ║   Server running on: http://localhost:${PORT}     ║
-║   Health check: GET /health                   ║
-║   SePay webhook: POST /webhook/sepay          ║
-║   Legacy callback: POST /callback             ║
-║   View callbacks: GET /callbacks              ║
-║   View callback: GET /callbacks/:id           ║
-║   Clear callbacks: DELETE /callbacks          ║
+║                                                ║
+║   ENDPOINTS:                                   ║
+║   GET  /health                  - Health check ║
+║   POST /api/orders              - Create order ║
+║   GET  /api/orders/:code/status - Check status ║
+║   POST /webhook/sepay           - SePay webhook║
+║   POST /callback                - Legacy call  ║
 ╚════════════════════════════════════════════════╝
   `);
 });

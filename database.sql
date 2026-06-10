@@ -25,14 +25,9 @@ CREATE TABLE IF NOT EXISTS transactions (
 );
 
 -- Orders table (example for business logic)
-CREATE TABLE IF NOT EXISTS orders (
-  id BIGINT AUTO_INCREMENT PRIMARY KEY,
-  code VARCHAR(100) UNIQUE NOT NULL,
-  amount DECIMAL(15, 2) NOT NULL,
-  status VARCHAR(50) DEFAULT 'pending' COMMENT 'pending, paid, fulfilled, cancelled',
-  paid_at DATETIME,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  INDEX idx_code (code),
-  INDEX idx_status (status)
-);
+CREATE TABLE webhook_logs (
+    id              BIGINT AUTO_INCREMENT PRIMARY KEY,
+    transaction_id  BIGINT NOT NULL UNIQUE COMMENT 'ID giao dịch SePay',
+    body            JSON   NOT NULL,
+    created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
