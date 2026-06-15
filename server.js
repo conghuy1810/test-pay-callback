@@ -21,6 +21,17 @@ const db = mysql.createPool({
   queueLimit: 0
 });
 
+// Optional billing webdb pool (for updating tkbb.cash_refer)
+const billingDb = mysql.createPool({
+  host: process.env.BILLING_DB_HOST || process.env.DB_HOST || 'localhost',
+  user: process.env.BILLING_DB_USER || process.env.DB_USER || 'root',
+  password: process.env.BILLING_DB_PASS || process.env.DB_PASS || 'root123',
+  database: process.env.BILLING_DB_NAME || 'billing',
+  waitForConnections: true,
+  connectionLimit: 5,
+  queueLimit: 0
+});
+
 
 // ============================================================================
 // RATE LIMITERS
@@ -328,6 +339,25 @@ app.post('/webhook/sepay', webhookLimiter, express.raw({ type: '*/*' }), async (
          WHERE code = ? AND status = 'pending' AND amount <= ?`,
         [data.code, data.transferAmount]
       );
+
+      // Update billing.tkbb.cash_refer when order code indicates a top-up (starts with NAPJ)
+      try {
+        if (typeof data.code === 'string' && data.code.startsWith('NAPJ')) {
+          const cashRefer = (data.referenceCode || '').substring(0, 100);
+          const accountNumber = (data.accountNumber || '').substring(0, 100);
+          if (accountNumber) {
+            await billingDb.execute(
+              `UPDATE tkbb SET cash_refer = ? WHERE account_number = ?`,
+              [cashRefer, accountNumber]
+            );
+            safeLog.info('Updated tkbb.cash_refer', { accountNumber, cashRefer });
+          } else {
+            safeLog.warn('No accountNumber to update tkbb.cash_refer', { transaction_id: data.id });
+          }
+        }
+      } catch (err) {
+        safeLog.error('Billing DB update failed', err);
+      }
 
       // TODO: enqueue job for email, inventory update, etc.
     }
