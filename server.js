@@ -3,6 +3,9 @@ const express = require('express');
 const bodyParser = require('body-parser');
 const crypto = require('crypto');
 const mysql = require('mysql2/promise');
+const rateLimit = require('express-rate-limit');
+const joi = require('joi');
+const helmet = require('helmet');
 
 const app = express();
 const PORT = process.env.PORT || 5730;
@@ -18,69 +21,85 @@ const db = mysql.createPool({
   queueLimit: 0
 });
 
-// Initialize database tables
-async function initializeDatabase() {
-  try {
-    const connection = await db.getConnection();
-    
-    // Create tables
-    await connection.execute(`
-      CREATE TABLE IF NOT EXISTS transactions (
-        id BIGINT AUTO_INCREMENT PRIMARY KEY,
-        sepay_id VARCHAR(255) UNIQUE NOT NULL COMMENT 'SePay transaction ID',
-        gateway VARCHAR(100) COMMENT 'Payment gateway',
-        transaction_date DATETIME,
-        account_number VARCHAR(100),
-        sub_account VARCHAR(100),
-        code VARCHAR(100) COMMENT 'Order/reference code',
-        amount_in DECIMAL(15, 2) DEFAULT 0 COMMENT 'Incoming amount',
-        amount_out DECIMAL(15, 2) DEFAULT 0 COMMENT 'Outgoing amount',
-        accumulated DECIMAL(15, 2),
-        content VARCHAR(500) COMMENT 'Transaction description',
-        reference_code VARCHAR(100),
-        body LONGTEXT COMMENT 'Raw webhook body',
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        INDEX idx_sepay_id (sepay_id),
-        INDEX idx_code (code),
-        INDEX idx_created_at (created_at)
-      )
-    `);
-    
-    await connection.execute(`
-      CREATE TABLE IF NOT EXISTS webhook_logs (
-        id BIGINT AUTO_INCREMENT PRIMARY KEY,
-        transaction_id BIGINT NOT NULL UNIQUE COMMENT 'ID giao dịch SePay',
-        body JSON NOT NULL,
-        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-    `);
-    
-    await connection.execute(`
-      CREATE TABLE IF NOT EXISTS orders (
-        id BIGINT AUTO_INCREMENT PRIMARY KEY,
-        code VARCHAR(100) UNIQUE NOT NULL,
-        amount DECIMAL(15, 2) NOT NULL,
-        status VARCHAR(50) DEFAULT 'pending',
-        paid_at TIMESTAMP NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        INDEX idx_code (code),
-        INDEX idx_status (status)
-      )
-    `);
-    
-    connection.release();
-    console.log('✓ Database tables initialized successfully');
-  } catch (err) {
-    console.error('Database initialization error:', err);
-    process.exit(1);
-  }
-}
+
+// ============================================================================
+// RATE LIMITERS
+// ============================================================================
+const generalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // limit each IP to 100 requests per windowMs
+  message: 'Too many requests from this IP, please try again later.',
+  standardHeaders: true, // Return rate limit info in `RateLimit-*` headers
+  legacyHeaders: false,
+});
+
+const webhookLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 50, // Higher limit for webhook (SePay might retry)
+  skip: (req) => {
+    // Skip rate limit if signature is valid (will be verified later)
+    return !req.headers['x-sepay-signature'];
+  },
+  message: 'Webhook rate limit exceeded',
+});
+
+const strictLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10, // Very strict for order creation
+  message: 'Too many order creation requests, please try again later.',
+});
 
 // Middleware
-app.use(bodyParser.json());
-app.use(bodyParser.urlencoded({ extended: true }));
+app.use(bodyParser.json({ limit: '1mb' })); // Limit payload size
+app.use(bodyParser.urlencoded({ extended: true, limit: '1mb' }));
+
+// Security: Helmet middleware (sets various HTTP headers)
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", 'data:', 'https:'],
+      connectSrc: ["'self'"],
+    }
+  },
+  referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+  hsts: { maxAge: 31536000, includeSubDomains: true, preload: true } // HTTPS only
+}));
+
+// Security: Prevent parameter pollution
+app.use((req, res, next) => {
+  for (const key in req.query) {
+    if (Array.isArray(req.query[key])) {
+      req.query[key] = req.query[key][0]; // Take first value only
+    }
+  }
+  next();
+});
+
+// Apply general rate limiter
+app.use(generalLimiter);
+
+// CORS support - restrict to common origins
+app.use((req, res, next) => {
+  const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',') || ['localhost', '127.0.0.1'];
+  const origin = req.get('origin');
+  
+  if (!origin || allowedOrigins.some(allowed => origin.includes(allowed))) {
+    res.header('Access-Control-Allow-Origin', origin || 'http://localhost:3000');
+  }
+  
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  res.header('Access-Control-Allow-Credentials', 'true');
+
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(204);
+  }
+
+  next();
+});
 
 // SePay Configuration (set in .env)
 const SEPAY_ACCOUNT = process.env.SEPAY_ACCOUNT || '0010000000355';
@@ -90,16 +109,69 @@ const SEPAY_BANK = process.env.SEPAY_BANK || 'Vietcombank';
 const callbacks = [];
 
 // ============================================================================
+// SECURITY UTILITIES
+// ============================================================================
+// Safe logger - doesn't log sensitive data
+const safeLog = {
+  info: (msg, data = {}) => {
+    const safe = {};
+    for (const [k, v] of Object.entries(data)) {
+      if (['signature', 'password', 'secret', 'token', 'authorization', 'body'].includes(k.toLowerCase())) {
+        safe[k] = '[REDACTED]';
+      } else {
+        safe[k] = v;
+      }
+    }
+    console.log(`[INFO] ${msg}`, Object.keys(safe).length > 0 ? safe : '');
+  },
+  error: (msg, err) => {
+    console.error(`[ERROR] ${msg}`, err?.message || err);
+  },
+  warn: (msg, data = {}) => {
+    console.warn(`[WARN] ${msg}`, data);
+  }
+};
+
+// ============================================================================
+// VALIDATION SCHEMAS
+// ============================================================================
+const orderSchema = joi.object({
+  des: joi.string().max(100).allow(null, ''),
+  amount: joi.number().integer().positive().max(999999999).required()
+});
+
+const codeSchema = joi.object({
+  code: joi.string().max(100).required()
+});
+
+// Middleware to validate request
+const validateRequest = (schema) => (req, res, next) => {
+  const { error, value } = schema.validate(req.body, {
+    abortEarly: true,
+    stripUnknown: true // Remove unknown fields
+  });
+
+  if (error) {
+    return res.status(400).json({
+      success: false,
+      message: 'Invalid input',
+      details: error.details.map(d => d.message)
+    });
+  }
+
+  req.body = value; // Replace with validated data
+  next();
+};
+
+// ============================================================================
 // ORDERS API - Create orders with QR codes
 // ============================================================================
 const ordersRouter = express.Router();
 
-ordersRouter.post('/', async (req, res) => {
+ordersRouter.post('/', strictLimiter, validateRequest(orderSchema), async (req, res) => {
   try {
-    const idUser = req.body.idUser || null;
-    const amount = Number(req.body.amount) || 100000;
+    const { des: code, amount } = req.body;
 
-    const code = 'DH' + idUser;
     await db.execute(
       'INSERT INTO orders (code, amount, status) VALUES (?, ?, ?)',
       [code, amount, 'pending']
@@ -120,20 +192,28 @@ ordersRouter.post('/', async (req, res) => {
       qrUrl: `https://qr.sepay.vn/img?${qr}`,
     });
   } catch (err) {
-    console.error('Order creation error:', err);
+    safeLog.error('Order creation error', err);
     res.status(500).json({ success: false, message: 'Failed to create order' });
   }
 });
 
-ordersRouter.get('/:code/status', async (req, res) => {
+ordersRouter.get('/:code/status', validateRequest(joi.object({ code: joi.string().max(100).required() }).keys({ code: joi.any() }).pattern(joi.string(), joi.any())), async (req, res) => {
   try {
+    const code = req.params.code;
+    
+    // Validate code parameter
+    const { error, value } = joi.string().max(100).required().validate(code);
+    if (error) {
+      return res.status(400).json({ success: false, message: 'Invalid code parameter' });
+    }
+
     const [rows] = await db.execute(
       'SELECT status FROM orders WHERE code = ?',
-      [req.params.code]
+      [value]
     );
     res.json({ status: rows[0]?.status ?? 'not_found' });
   } catch (err) {
-    console.error('Status check error:', err);
+    safeLog.error('Status check error', err);
     res.status(500).json({ success: false, message: 'Failed to check status' });
   }
 });
@@ -149,12 +229,20 @@ app.get('/health', (req, res) => {
 });
 
 // SePay webhook endpoint
-app.post('/webhook/sepay', express.raw({ type: '*/*' }), async (req, res) => {
+app.post('/webhook/sepay', webhookLimiter, express.raw({ type: '*/*' }), async (req, res) => {
   try {
     const body = req.body.toString('utf8');
     
     if (!body) {
       return res.status(400).json({ success: false, message: 'Empty body' });
+    }
+
+    // Validate body is valid JSON before processing
+    let data;
+    try {
+      data = JSON.parse(body);
+    } catch (err) {
+      return res.status(400).json({ success: false, message: 'Invalid JSON' });
     }
 
     // 1. HMAC-SHA256 signature verification
@@ -163,7 +251,7 @@ app.post('/webhook/sepay', express.raw({ type: '*/*' }), async (req, res) => {
     const secret = process.env.SEPAY_WEBHOOK_SECRET;
 
     if (!secret) {
-      console.error('Missing SEPAY_WEBHOOK_SECRET in environment');
+      safeLog.error('Missing SEPAY_WEBHOOK_SECRET in environment', null);
       return res.status(500).json({ success: false, message: 'Server configuration error' });
     }
 
@@ -181,20 +269,21 @@ app.post('/webhook/sepay', express.raw({ type: '*/*' }), async (req, res) => {
     const exp = Buffer.from(expected);
 
     if (sig.length !== exp.length || !crypto.timingSafeEqual(sig, exp)) {
-      console.warn('Invalid signature:', { signature, expected });
+      safeLog.warn('Invalid signature detected');
       return res.status(401).json({ success: false, message: 'Invalid signature' });
-    }
-
-    // 2. Parse JSON payload
-    let data;
-    try {
-      data = JSON.parse(body);
-    } catch (err) {
-      return res.status(400).json({ success: false, message: 'Invalid JSON' });
     }
 
     if (!data?.id) {
       return res.status(400).json({ success: false, message: 'Invalid payload - missing id' });
+    }
+
+    // Validate critical fields
+    if (typeof data.id !== 'string' || data.id.length > 255) {
+      return res.status(400).json({ success: false, message: 'Invalid transaction ID' });
+    }
+
+    if (data.transferAmount && (typeof data.transferAmount !== 'number' || data.transferAmount <= 0)) {
+      return res.status(400).json({ success: false, message: 'Invalid transfer amount' });
     }
 
     // 3. Idempotency: INSERT IGNORE prevents duplicate processing
@@ -205,27 +294,31 @@ app.post('/webhook/sepay', express.raw({ type: '*/*' }), async (req, res) => {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         data.id,
-        data.gateway || '',
+        (data.gateway || '').substring(0, 100),
         data.transactionDate || new Date().toISOString(),
-        data.accountNumber || '',
-        data.subAccount || '',
-        data.code || '',
+        (data.accountNumber || '').substring(0, 100),
+        (data.subAccount || '').substring(0, 100),
+        (data.code || '').substring(0, 100),
         data.transferType === 'in' ? data.transferAmount : 0,
         data.transferType === 'out' ? data.transferAmount : 0,
         data.accumulated || 0,
-        data.content || '',
-        data.referenceCode || '',
+        (data.content || '').substring(0, 500),
+        (data.referenceCode || '').substring(0, 100),
         body
       ]
     );
 
     if (result.affectedRows === 0) {
       // Already processed - return OK to prevent SePay retry
-      console.log('Duplicate transaction ignored:', data.id);
+      safeLog.info('Duplicate transaction ignored', { transaction_id: data.id });
       return res.json({ success: true });
     }
 
-    console.log('✓ Transaction processed:', data.id, data.transferAmount, data.code);
+    safeLog.info('Transaction processed', { 
+      transaction_id: data.id, 
+      amount: data.transferAmount, 
+      code: data.code 
+    });
 
     // 4. Business logic: execute only on first INSERT
     if (data.transferType === 'in' && data.code) {
@@ -241,13 +334,18 @@ app.post('/webhook/sepay', express.raw({ type: '*/*' }), async (req, res) => {
 
     res.json({ success: true });
   } catch (err) {
-    console.error('SePay webhook error:', err);
+    safeLog.error('SePay webhook error', err);
     res.status(500).json({ success: false, message: 'Internal error' });
   }
 });
 
 // Legacy callback endpoint (for backwards compatibility)
-app.post('/callback', (req, res) => {
+app.post('/callback', generalLimiter, (req, res) => {
+  // Validate callback body size
+  if (!req.body || Object.keys(req.body).length === 0) {
+    return res.status(400).json({ success: false, message: 'Empty callback body' });
+  }
+
   const callbackData = {
     receivedAt: new Date().toISOString(),
     body: req.body,
@@ -256,7 +354,7 @@ app.post('/callback', (req, res) => {
   };
 
   callbacks.push(callbackData);
-  console.log('✓ Callback received:', callbackData);
+  safeLog.info('Legacy callback received', { ip: callbackData.ip, body_keys: Object.keys(callbackData.body) });
 
   res.status(200).json({
     success: true,
@@ -272,12 +370,16 @@ app.use((req, res) => {
 
 // Start server
 app.listen(PORT, async () => {
-  await initializeDatabase();
+  safeLog.info('Server started', { 
+    port: PORT, 
+    env: process.env.NODE_ENV || 'development'
+  });
   console.log(`
 ╔════════════════════════════════════════════════╗
 ║   Payment Callback Server Started             ║
 ╠════════════════════════════════════════════════╣
 ║   Server running on: http://localhost:${PORT}     ║
+║   Environment: ${(process.env.NODE_ENV || 'development').padEnd(29)}║
 ║                                                ║
 ║   ENDPOINTS:                                   ║
 ║   GET  /health                  - Health check ║
