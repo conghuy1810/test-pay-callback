@@ -236,7 +236,10 @@ app.post(
       if (!body) {
         return res.status(400).json({ success: false, message: "Empty body" });
       }
-
+      console.log("Received SePay webhook", {
+        headers: req.headers,
+        body,
+      });
       // Validate body is valid JSON before processing
       let data;
       try {
