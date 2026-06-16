@@ -326,12 +326,6 @@ app.post(
       }
 
       // Validate critical fields
-      if (typeof data.id !== "string" || data.id.length > 255) {
-        return res
-          .status(400)
-          .json({ success: false, message: "Invalid transaction ID" });
-      }
-
       if (
         data.transferAmount &&
         (typeof data.transferAmount !== "number" || data.transferAmount <= 0)
