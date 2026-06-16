@@ -26,27 +26,49 @@ const generalLimiter = rateLimit({
 const webhookLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
   max: 50, // Higher limit for webhook (SePay might retry)
-  skip: (req) => {
-    // Skip rate limit if signature is valid (will be verified later)
-    return !req.headers["x-sepay-signature"];
+  keyGenerator: (req) => {
+    // 1. Lấy IP từ header X-Forwarded-For hoặc X-Real-IP do Nginx gửi sang
+    let ip = req.headers["x-forwarded-for"] || req.headers["x-real-ip"];
+
+    // 2. Nếu Nginx gửi dạng chuỗi danh sách (IP1, IP2), lấy cái đầu tiên
+    if (ip && ip.includes(",")) {
+      ip = ip.split(",")[0];
+    }
+
+    // 3. Nếu vẫn không lấy được (hoặc bằng 'unknown'), fallback về IP kết nối trực tiếp hoặc chuỗi mặc định
+    if (!ip || ip === "unknown") {
+      ip = req.socket.remoteAddress || "local-fallback-ip";
+    }
+
+    return ip.trim();
   },
   message: "Webhook rate limit exceeded",
 });
 
 const strictLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 10, // Very strict for order creation
-  message: "Too many order creation requests, please try again later.",
-  keyGenerator: (req, res) => {
-    // Ưu tiên lấy từ X-Forwarded-For, nếu "unknown" hoặc rỗng thì lấy remoteAddress, cuối cùng là fallback về 'localhost'
-    const ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
-    if (!ip || ip === "unknown") {
-      return "fallback-ip-local";
+  windowMs: 15 * 60 * 1000, // 15 phút
+  max: 100, // Giới hạn 100 requests mỗi IP
+  standardHeaders: true,
+  legacyHeaders: false,
+
+  // 🔥 THÊM ĐOẠN NÀY ĐỂ SỬA TRIỆT ĐỂ LỖI UNKNOWN:
+  keyGenerator: (req) => {
+    // 1. Lấy IP từ header X-Forwarded-For hoặc X-Real-IP do Nginx gửi sang
+    let ip = req.headers["x-forwarded-for"] || req.headers["x-real-ip"];
+
+    // 2. Nếu Nginx gửi dạng chuỗi danh sách (IP1, IP2), lấy cái đầu tiên
+    if (ip && ip.includes(",")) {
+      ip = ip.split(",")[0];
     }
-    return ip.split(",")[0].trim(); // Lấy IP đầu tiên nếu là một chuỗi danh sách IP
+
+    // 3. Nếu vẫn không lấy được (hoặc bằng 'unknown'), fallback về IP kết nối trực tiếp hoặc chuỗi mặc định
+    if (!ip || ip === "unknown") {
+      ip = req.socket.remoteAddress || "local-fallback-ip";
+    }
+
+    return ip.trim();
   },
 });
-
 // Middleware
 app.use(bodyParser.json({ limit: "1mb" })); // Limit payload size
 app.use(bodyParser.urlencoded({ extended: true, limit: "1mb" }));
@@ -244,10 +266,7 @@ app.post(
       if (!body) {
         return res.status(400).json({ success: false, message: "Empty body" });
       }
-      console.log("Received SePay webhook post", {
-        headers: req.headers,
-        body,
-      });
+
       // Validate body is valid JSON before processing
       let data;
       try {
@@ -257,7 +276,10 @@ app.post(
           .status(400)
           .json({ success: false, message: "Invalid JSON" });
       }
-
+      console.log("Received SePay webhook post", {
+        headers: req.headers,
+        data,
+      });
       // 1. HMAC-SHA256 signature verification
       const signature = req.headers["x-sepay-signature"] ?? "";
       const timestamp = Number(req.headers["x-sepay-timestamp"] ?? 0);
@@ -391,85 +413,6 @@ app.post("/callback", generalLimiter, (req, res) => {
     id: callbacks.length,
   });
 });
-app.get(
-  "/webhook/sepay",
-  webhookLimiter,
-  express.raw({ type: "*/*" }),
-  async (req, res) => {
-    try {
-      const body = req.body.toString("utf8");
-
-      if (!body) {
-        return res.status(400).json({ success: false, message: "Empty body" });
-      }
-      console.log("Received SePay webhook get", {
-        headers: req.headers,
-        body,
-      });
-      // Validate body is valid JSON before processing
-      let data;
-      try {
-        data = JSON.parse(body);
-      } catch (err) {
-        return res
-          .status(400)
-          .json({ success: false, message: "Invalid JSON" });
-      }
-
-      // 1. HMAC-SHA256 signature verification
-      const signature = req.headers["x-sepay-signature"] ?? "";
-      const timestamp = Number(req.headers["x-sepay-timestamp"] ?? 0);
-      const secret = process.env.SEPAY_WEBHOOK_SECRET;
-      console.log("Verifying signature", {
-        signature,
-        timestamp,
-        secret: secret,
-      });
-      if (!secret) {
-        safeLog.error("Missing SEPAY_WEBHOOK_SECRET in environment", null);
-        return res
-          .status(500)
-          .json({ success: false, message: "Server configuration error" });
-      }
-
-      // Anti-replay: timestamp must be within 5 minutes
-      if (Math.abs(Date.now() / 1000 - timestamp) > 300) {
-        return res
-          .status(401)
-          .json({ success: false, message: "Request expired" });
-      }
-
-      // Verify HMAC-SHA256
-      const expected =
-        "sha256=" +
-        crypto
-          .createHmac("sha256", secret)
-          .update(`${timestamp}.${body}`)
-          .digest("hex");
-
-      const sig = Buffer.from(signature);
-      const exp = Buffer.from(expected);
-
-      if (sig.length !== exp.length || !crypto.timingSafeEqual(sig, exp)) {
-        safeLog.warn("Invalid signature detected");
-        return res
-          .status(401)
-          .json({ success: false, message: "Invalid signature" });
-      }
-
-      if (!data?.id) {
-        return res
-          .status(400)
-          .json({ success: false, message: "Invalid payload - missing id" });
-      }
-
-      res.json({ success: true });
-    } catch (err) {
-      safeLog.error("SePay webhook error", err);
-      res.status(500).json({ success: false, message: "Internal error" });
-    }
-  },
-);
 
 // Legacy callback endpoint (for backwards compatibility)
 app.post("/callback", generalLimiter, (req, res) => {
