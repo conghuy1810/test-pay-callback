@@ -10,15 +10,6 @@ const helmet = require("helmet");
 
 const app = express();
 const PORT = process.env.PORT || 5730;
-const result = require("dotenv").config();
-
-if (result.error) {
-  console.log("Lỗi dotenv rồi:", result.error);
-} else {
-  console.log("Đã nạp file env thành công!");
-  console.log("Biến của bạn là:", process.env.SEPAY_WEBHOOK_SECRET);
-}
-const SEPAY_WEBHOOK_SECRET = "test_secret_key";
 
 app.set("trust proxy", 1);
 
@@ -289,7 +280,6 @@ app.post(
       const secret = process.env.SEPAY_WEBHOOK_SECRET;
 
       if (!secret) {
-        safeLog.error("Missing SEPAY_WEBHOOK_SECRET in environment", null);
         return res
           .status(500)
           .json({ success: false, message: "Server configuration error" });
@@ -313,12 +303,10 @@ app.post(
       const sig = Buffer.from(signature);
       const exp = Buffer.from(expected);
       if (sig.length !== exp.length || !crypto.timingSafeEqual(sig, exp)) {
-        safeLog.warn("Invalid signature detected");
         return res
           .status(401)
           .json({ success: false, message: "Invalid signature" });
       }
-      console.log("Webhook signature verified successfully", data);
       if (!data?.id) {
         return res
           .status(400)
@@ -343,13 +331,6 @@ app.post(
           const cashTrans = data.transferAmount;
           const description = data.content;
           const match = description.match(/TKCD(\d+)/);
-          console.log("Received SePay webhook for transaction", {
-            id: data.id,
-            code: data.code,
-            amount: cashTrans,
-            description,
-            match,
-          });
           if (description && cashTrans && match) {
             const id = parseInt(match[1], 10);
             const toptupRq = await fetch(
@@ -370,14 +351,8 @@ app.post(
                 method: "POST",
               },
             );
-            const topupRes = await toptupRq.json();
-            console.log("Top-up request result", {
-              status: toptupRq.status,
-              body: topupRes,
-            });
           }
         } catch (err) {
-          safeLog.error("Billing DB update failed", err);
           return res
             .status(400)
             .json({ success: false, message: "Invalid payload - missing id" });
@@ -388,7 +363,6 @@ app.post(
 
       res.json({ success: true });
     } catch (err) {
-      safeLog.error("SePay webhook error", err);
       res.status(500).json({ success: false, message: "Internal error" });
     }
   },
