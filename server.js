@@ -206,7 +206,7 @@ ordersRouter.get('/:code/status', validateRequest(joi.object({ code: joi.string(
   }
 });
 
-app.use('/api/orders', ordersRouter);
+app.use('/v1/orders', ordersRouter);
 
 // ============================================================================
 // HEALTH CHECK
@@ -336,7 +336,7 @@ app.post('/callback', generalLimiter, (req, res) => {
   });
 });
 
-app.post('/api/get-user', async (req, res) => {
+app.post('/v1/get-user', async (req, res) => {
   try {
     const { user } = req.body;
     const usersResponse = await fetch(
