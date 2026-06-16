@@ -357,16 +357,15 @@ app.post('/api/get-user', async (req, res) => {
     }
 
     const usersData = await usersResponse.json();
-    const user = usersData.items?.[0];
+    const resUser = usersData.items?.[0];
 
-    if (!user) {
+    if (!resUser) {
       return res.status(404).json({ success: false, message: 'User not found' });
     }
 
     res.status(200).json({
       success: true,
-      id: user.id,
-      user
+      id: resUser.id,
     });
   } catch (err) {
     safeLog.error('Failed to fetch user', err);
