@@ -37,6 +37,14 @@ const strictLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 10, // Very strict for order creation
   message: "Too many order creation requests, please try again later.",
+  keyGenerator: (req, res) => {
+    // Ưu tiên lấy từ X-Forwarded-For, nếu "unknown" hoặc rỗng thì lấy remoteAddress, cuối cùng là fallback về 'localhost'
+    const ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
+    if (!ip || ip === "unknown") {
+      return "fallback-ip-local";
+    }
+    return ip.split(",")[0].trim(); // Lấy IP đầu tiên nếu là một chuỗi danh sách IP
+  },
 });
 
 // Middleware
@@ -236,7 +244,7 @@ app.post(
       if (!body) {
         return res.status(400).json({ success: false, message: "Empty body" });
       }
-      console.log("Received SePay webhook", {
+      console.log("Received SePay webhook post", {
         headers: req.headers,
         body,
       });
@@ -394,7 +402,7 @@ app.get(
       if (!body) {
         return res.status(400).json({ success: false, message: "Empty body" });
       }
-      console.log("Received SePay webhook", {
+      console.log("Received SePay webhook get", {
         headers: req.headers,
         body,
       });
