@@ -301,7 +301,7 @@ app.post(
           .status(401)
           .json({ success: false, message: "Request expired" });
       }
-      const rawBody = req.body.toString("utf-8");
+      const rawBody = JSON.stringify(req.body);
       // Verify HMAC-SHA256
       const expected =
         "sha256=" +
