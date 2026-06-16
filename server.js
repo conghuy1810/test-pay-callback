@@ -379,7 +379,57 @@ app.post("/callback", generalLimiter, (req, res) => {
     id: callbacks.length,
   });
 });
+app.get(
+  "/webhook/sepay",
+  webhookLimiter,
+  express.raw({ type: "*/*" }),
+  async (req, res) => {
+    try {
+      const body = req.body.toString("utf8");
 
+      if (!body) {
+        return res.status(400).json({ success: false, message: "Empty body" });
+      }
+      console.log("Received SePay webhook", {
+        headers: req.headers,
+        body,
+      });
+      res.json({ success: true });
+    } catch (err) {
+      safeLog.error("SePay webhook error", err);
+      res.status(500).json({ success: false, message: "Internal error" });
+    }
+  },
+);
+
+// Legacy callback endpoint (for backwards compatibility)
+app.post("/callback", generalLimiter, (req, res) => {
+  // Validate callback body size
+  if (!req.body || Object.keys(req.body).length === 0) {
+    return res
+      .status(400)
+      .json({ success: false, message: "Empty callback body" });
+  }
+
+  const callbackData = {
+    receivedAt: new Date().toISOString(),
+    body: req.body,
+    headers: req.headers,
+    ip: req.ip,
+  };
+
+  callbacks.push(callbackData);
+  safeLog.info("Legacy callback received", {
+    ip: callbackData.ip,
+    body_keys: Object.keys(callbackData.body),
+  });
+
+  res.status(200).json({
+    success: true,
+    message: "Callback received successfully",
+    id: callbacks.length,
+  });
+});
 app.post("/v1/get-user", async (req, res) => {
   try {
     const { user } = req.body;
