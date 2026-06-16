@@ -10,27 +10,8 @@ const helmet = require('helmet');
 const app = express();
 const PORT = process.env.PORT || 5730;
 
-// MySQL connection pool
-const db = mysql.createPool({
-  host: process.env.DB_HOST || 'localhost',
-  user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASS || 'root123',
-  database: process.env.DB_NAME || 'payments',
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0
-});
 
-// Optional billing webdb pool (for updating tkbb.cash_refer)
-const billingDb = mysql.createPool({
-  host: process.env.BILLING_DB_HOST || process.env.DB_HOST || 'localhost',
-  user: process.env.BILLING_DB_USER || process.env.DB_USER || 'root',
-  password: process.env.BILLING_DB_PASS || process.env.DB_PASS || 'root123',
-  database: process.env.BILLING_DB_NAME || 'billing',
-  waitForConnections: true,
-  connectionLimit: 5,
-  queueLimit: 0
-});
+
 
 
 // ============================================================================
@@ -113,8 +94,9 @@ app.use((req, res, next) => {
 });
 
 // SePay Configuration (set in .env)
-const SEPAY_ACCOUNT = process.env.SEPAY_ACCOUNT || '0010000000355';
-const SEPAY_BANK = process.env.SEPAY_BANK || 'Vietcombank';
+const SEPAY_ACCOUNT = '26254221';
+const SEPAY_BANK = 'ACB';
+const USER_SERVICE_BASE_URL = process.env.USER_SERVICE_BASE_URL || 'http://149.28.153.144:8379';
 
 // Logs for callback requests (in-memory for non-webhook callbacks)
 const callbacks = [];
@@ -181,7 +163,7 @@ const ordersRouter = express.Router();
 
 ordersRouter.post('/', strictLimiter, validateRequest(orderSchema), async (req, res) => {
   try {
-    const { des: code, amount } = req.body;s
+    const { des: code, amount } = req.body;
 
     const qr = new URLSearchParams({
       acc: SEPAY_ACCOUNT,
@@ -300,7 +282,7 @@ app.post('/webhook/sepay', webhookLimiter, express.raw({ type: '*/*' }), async (
           const cashTrans = data.transferAmount;
           const description = data.transferAmount;
           if (description && cashTrans) {
-            await fetch(`http://149.28.153.144:8379/api/accounts/${description}/topups`, {
+            await fetch(`http://localhost:8379/api/accounts/${description}/topups`, {
               headers: {
                 accept: "*/*",
                 "accept-language": "vi,en-US;q=0.9,en;q=0.8",
@@ -352,6 +334,44 @@ app.post('/callback', generalLimiter, (req, res) => {
     message: 'Callback received successfully',
     id: callbacks.length
   });
+});
+
+app.post('/api/get-user', async (req, res) => {
+  try {
+    const { user } = req.body;
+    const usersResponse = await fetch(
+      `http://localhost:8379/api/users?page=1&limit=50&search=${encodeURIComponent(user)}`,
+      {
+        method: 'GET',
+        headers: {
+          accept: '*/*',
+          'accept-language': 'vi,en-US;q=0.9,en;q=0.8',
+        },
+      }
+    );
+
+    if (!usersResponse.ok) {
+      const errorText = await usersResponse.text();
+      safeLog.error('User service returned error', { status: usersResponse.status, body: errorText });
+      return res.status(502).json({ success: false, message: 'Failed to fetch user data' });
+    }
+
+    const usersData = await usersResponse.json();
+    const user = usersData.items?.[0];
+
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    res.status(200).json({
+      success: true,
+      id: user.id,
+      user
+    });
+  } catch (err) {
+    safeLog.error('Failed to fetch user', err);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
 });
 
 // 404 handler
