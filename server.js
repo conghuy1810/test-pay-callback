@@ -181,12 +181,7 @@ const ordersRouter = express.Router();
 
 ordersRouter.post('/', strictLimiter, validateRequest(orderSchema), async (req, res) => {
   try {
-    const { des: code, amount } = req.body;
-
-    await db.execute(
-      'INSERT INTO orders (code, amount, status) VALUES (?, ?, ?)',
-      [code, amount, 'pending']
-    );
+    const { des: code, amount } = req.body;s
 
     const qr = new URLSearchParams({
       acc: SEPAY_ACCOUNT,
@@ -297,64 +292,30 @@ app.post('/webhook/sepay', webhookLimiter, express.raw({ type: '*/*' }), async (
       return res.status(400).json({ success: false, message: 'Invalid transfer amount' });
     }
 
-    // 3. Idempotency: INSERT IGNORE prevents duplicate processing
-    const [result] = await db.execute(
-      `INSERT IGNORE INTO transactions
-       (sepay_id, gateway, transaction_date, account_number, sub_account,
-        code, amount_in, amount_out, accumulated, content, reference_code, body)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        data.id,
-        (data.gateway || '').substring(0, 100),
-        data.transactionDate || new Date().toISOString(),
-        (data.accountNumber || '').substring(0, 100),
-        (data.subAccount || '').substring(0, 100),
-        (data.code || '').substring(0, 100),
-        data.transferType === 'in' ? data.transferAmount : 0,
-        data.transferType === 'out' ? data.transferAmount : 0,
-        data.accumulated || 0,
-        (data.content || '').substring(0, 500),
-        (data.referenceCode || '').substring(0, 100),
-        body
-      ]
-    );
-
-    if (result.affectedRows === 0) {
-      // Already processed - return OK to prevent SePay retry
-      safeLog.info('Duplicate transaction ignored', { transaction_id: data.id });
-      return res.json({ success: true });
-    }
-
-    safeLog.info('Transaction processed', { 
-      transaction_id: data.id, 
-      amount: data.transferAmount, 
-      code: data.code 
-    });
-
     // 4. Business logic: execute only on first INSERT
     if (data.transferType === 'in' && data.code) {
       // Update order status to 'paid'
-      await db.execute(
-        `UPDATE orders SET status = 'paid', paid_at = NOW()
-         WHERE code = ? AND status = 'pending' AND amount <= ?`,
-        [data.code, data.transferAmount]
-      );
-
       // Update billing.tkbb.cash_refer when order code indicates a top-up (starts with NAPJ)
       try {
-        if (typeof data.code === 'string' && data.code.startsWith('NAPJ')) {
-          const cashRefer = (data.referenceCode || '').substring(0, 100);
-          const accountNumber = (data.accountNumber || '').substring(0, 100);
-          if (accountNumber) {
-            await billingDb.execute(
-              `UPDATE tkbb SET cash_refer = ? WHERE account_number = ?`,
-              [cashRefer, accountNumber]
-            );
-            safeLog.info('Updated tkbb.cash_refer', { accountNumber, cashRefer });
-          } else {
-            safeLog.warn('No accountNumber to update tkbb.cash_refer', { transaction_id: data.id });
+          const cashTrans = data.transferAmount;
+          const description = data.transferAmount;
+          if (description && cashTrans) {
+            await fetch(`http://149.28.153.144:8379/api/accounts/${description}/topups`, {
+              headers: {
+                accept: "*/*",
+                "accept-language": "vi,en-US;q=0.9,en;q=0.8",
+                "content-type": "application/json"
+              },
+              body: JSON.stringify({
+                account_id: description,
+                fee: Number(cashTrans),
+                server_id: "1",
+                channel: "dashboard",
+                trade_no: ""
+              }),
+              method: "POST",
+            });
           }
-        }
       } catch (err) {
         safeLog.error('Billing DB update failed', err);
       }
