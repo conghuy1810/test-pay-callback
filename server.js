@@ -342,7 +342,7 @@ app.post(
         try {
           const cashTrans = data.transferAmount;
           const description = data.content;
-          const match = description.match(/TKCD-(\d+)/);
+          const match = description.match(/TKCD(\d+)/);
           console.log("Received SePay webhook for transaction", {
             id: data.id,
             code: data.code,
@@ -352,20 +352,28 @@ app.post(
           });
           if (description && cashTrans && match) {
             const id = parseInt(match[1], 10);
-            await fetch(`http://localhost:8379/api/accounts/${id}/topups`, {
-              headers: {
-                accept: "*/*",
-                "accept-language": "vi,en-US;q=0.9,en;q=0.8",
-                "content-type": "application/json",
+            const toptupRq = await fetch(
+              `http://localhost:8379/api/accounts/${id}/topups`,
+              {
+                headers: {
+                  accept: "*/*",
+                  "accept-language": "vi,en-US;q=0.9,en;q=0.8",
+                  "content-type": "application/json",
+                },
+                body: JSON.stringify({
+                  account_id: id,
+                  fee: Number(cashTrans),
+                  server_id: "1",
+                  channel: "dashboard",
+                  trade_no: "",
+                }),
+                method: "POST",
               },
-              body: JSON.stringify({
-                account_id: description,
-                fee: Number(cashTrans),
-                server_id: "1",
-                channel: "dashboard",
-                trade_no: "",
-              }),
-              method: "POST",
+            );
+            const topupRes = await toptupRq.json();
+            console.log("Top-up request result", {
+              status: toptupRq.status,
+              body: topupRes,
             });
           }
         } catch (err) {
