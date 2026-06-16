@@ -18,7 +18,7 @@ if (result.error) {
   console.log("Đã nạp file env thành công!");
   console.log("Biến của bạn là:", process.env.SEPAY_WEBHOOK_SECRET);
 }
-const SEPAY_WEBHOOK_SECRET = 'test_secret_key';
+const SEPAY_WEBHOOK_SECRET = "test_secret_key";
 
 app.set("trust proxy", 1);
 
@@ -282,12 +282,12 @@ app.post(
       }
       // Validate body is valid JSON before processing
       const data = body;
-      
+
       // 1. HMAC-SHA256 signature verification
       const signature = req.headers["x-sepay-signature"] ?? "";
       const timestamp = Number(req.headers["x-sepay-timestamp"] ?? 0);
       const secret = process.env.SEPAY_WEBHOOK_SECRET;
-      
+
       if (!secret) {
         safeLog.error("Missing SEPAY_WEBHOOK_SECRET in environment", null);
         return res
@@ -312,7 +312,14 @@ app.post(
 
       const sig = Buffer.from(signature);
       const exp = Buffer.from(expected);
-
+      console.log(
+        "Received signature:",
+        signature,
+        sig,
+        "expected signature:",
+        expected,
+        exp,
+      );
       if (sig.length !== exp.length || !crypto.timingSafeEqual(sig, exp)) {
         safeLog.warn("Invalid signature detected");
         return res
