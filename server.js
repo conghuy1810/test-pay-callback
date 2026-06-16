@@ -10,6 +10,15 @@ const helmet = require("helmet");
 
 const app = express();
 const PORT = process.env.PORT || 5730;
+const result = require("dotenv").config();
+
+if (result.error) {
+  console.log("Lỗi dotenv rồi:", result.error);
+} else {
+  console.log("Đã nạp file env thành công!");
+  console.log("Biến của bạn là:", process.env.SEPAY_WEBHOOK_SECRET);
+}
+const SEPAY_WEBHOOK_SECRET = 'test_secret_key';
 
 app.set("trust proxy", 1);
 
@@ -24,31 +33,31 @@ const generalLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-const webhookLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 phút
-  max: 100, // Giới hạn 100 request
-  standardHeaders: true,
-  legacyHeaders: false,
+// const webhookLimiter = rateLimit({
+//   windowMs: 15 * 60 * 1000, // 15 phút
+//   max: 100, // Giới hạn 100 request
+//   standardHeaders: true,
+//   legacyHeaders: false,
 
-  // 🔥 BƯỚC 1: Tắt tính năng tự động check IP của Express để không bị văng lỗi 'unknown'
-  validate: { ip: false },
+//   // 🔥 BƯỚC 1: Tắt tính năng tự động check IP của Express để không bị văng lỗi 'unknown'
+//   validate: { ip: false },
 
-  // 🔥 BƯỚC 2: Tự định nghĩa cách lấy IP trực tiếp từ Header của Nginx
-  keyGenerator: (req, res) => {
-    let ip = req.ip;
-    try {
-      const forwards = parseForwarded(req.headers.forwarded);
-      ip = forwards[forwards.length - NUMBER_OF_PROXIES_TO_TRUST].for;
-    } catch (ex) {
-      console.error(
-        `Error parsing Forwarded header ${req.headers.forwarded} from ${req.ip}:`,
-        ex,
-      );
-    }
-    // Gọi hàm ipKeyGenerator đã lấy ra ở trên
-    return ipKeyGenerator(ip);
-  },
-});
+//   // 🔥 BƯỚC 2: Tự định nghĩa cách lấy IP trực tiếp từ Header của Nginx
+//   keyGenerator: (req, res) => {
+//     let ip = req.ip;
+//     try {
+//       const forwards = parseForwarded(req.headers.forwarded);
+//       ip = forwards[forwards.length - NUMBER_OF_PROXIES_TO_TRUST].for;
+//     } catch (ex) {
+//       console.error(
+//         `Error parsing Forwarded header ${req.headers.forwarded} from ${req.ip}:`,
+//         ex,
+//       );
+//     }
+//     // Gọi hàm ipKeyGenerator đã lấy ra ở trên
+//     return ipKeyGenerator(ip);
+//   },
+// });
 
 const strictLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 phút
@@ -262,7 +271,7 @@ app.get("/health", (req, res) => {
 // SePay webhook endpoint
 app.post(
   "/webhook/sepay",
-  webhookLimiter,
+  // webhookLimiter,
   express.raw({ type: "*/*" }),
   async (req, res) => {
     try {
