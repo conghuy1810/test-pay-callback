@@ -3,7 +3,8 @@ const express = require("express");
 const bodyParser = require("body-parser");
 const crypto = require("crypto");
 const mysql = require("mysql2/promise");
-const rateLimit = require("express-rate-limit");
+const { rateLimit, ipKeyGenerator } = require("express-rate-limit");
+const parseForwarded = require("forwarded-parse");
 const joi = require("joi");
 const helmet = require("helmet");
 
@@ -33,21 +34,19 @@ const webhookLimiter = rateLimit({
   validate: { ip: false },
 
   // 🔥 BƯỚC 2: Tự định nghĩa cách lấy IP trực tiếp từ Header của Nginx
-  keyGenerator: (req) => {
-    // Lấy IP từ X-Forwarded-For hoặc X-Real-IP
-    let clientIp = req.headers["x-forwarded-for"] || req.headers["x-real-ip"];
-
-    if (clientIp) {
-      // Nếu là chuỗi nhiều IP (do qua nhiều proxy), lấy cái đầu tiên
-      if (clientIp.includes(",")) {
-        clientIp = clientIp.split(",")[0];
-      }
-      return clientIp.trim();
+  keyGenerator: (req, res) => {
+    let ip = req.ip;
+    try {
+      const forwards = parseForwarded(req.headers.forwarded);
+      ip = forwards[forwards.length - NUMBER_OF_PROXIES_TO_TRUST].for;
+    } catch (ex) {
+      console.error(
+        `Error parsing Forwarded header ${req.headers.forwarded} from ${req.ip}:`,
+        ex,
+      );
     }
-
-    // Trường hợp bất khả kháng không thấy header (ví dụ gọi nội bộ không qua Nginx)
-    // Trả về IP kết nối trực tiếp hoặc một chuỗi cố định thay vì để undefined/unknown
-    return req.socket.remoteAddress || "127.0.0.1";
+    // Gọi hàm ipKeyGenerator đã lấy ra ở trên
+    return ipKeyGenerator(ip);
   },
 });
 
@@ -274,15 +273,7 @@ app.post(
       }
 
       // Validate body is valid JSON before processing
-      let data;
-      try {
-        data = JSON.parse(body);
-      } catch (err) {
-        console.log("Invalid JSON received in SePay webhook", { body }, err);
-        return res
-          .status(400)
-          .json({ success: false, message: "Invalid JSON" });
-      }
+      const data = body;
       console.log("Received SePay webhook post", {
         headers: req.headers,
         data,
