@@ -345,7 +345,7 @@ app.post(
                   account_id: id,
                   fee: Number(cashTrans),
                   server_id: "1",
-                  channel: "dashboard",
+                  channel: "qrCode",
                   trade_no: "",
                 }),
                 method: "POST",
