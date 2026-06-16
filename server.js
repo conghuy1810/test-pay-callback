@@ -336,40 +336,43 @@ app.post(
       }
 
       // 4. Business logic: execute only on first INSERT
-      if (data.transferType === "in" && data.code) {
+      if (data.transferType === "in") {
         // Update order status to 'paid'
         // Update billing.tkbb.cash_refer when order code indicates a top-up (starts with NAPJ)
         try {
           const cashTrans = data.transferAmount;
-          const description = data.transferAmount;
+          const description = data.content;
+          const match = description.match(/TKCD-(\d+)/);
           console.log("Received SePay webhook for transaction", {
             id: data.id,
             code: data.code,
             amount: cashTrans,
             description,
+            match,
           });
-          if (description && cashTrans) {
-            await fetch(
-              `http://localhost:8379/api/accounts/${description}/topups`,
-              {
-                headers: {
-                  accept: "*/*",
-                  "accept-language": "vi,en-US;q=0.9,en;q=0.8",
-                  "content-type": "application/json",
-                },
-                body: JSON.stringify({
-                  account_id: description,
-                  fee: Number(cashTrans),
-                  server_id: "1",
-                  channel: "dashboard",
-                  trade_no: "",
-                }),
-                method: "POST",
+          if (description && cashTrans && match) {
+            const id = parseInt(match[1], 10);
+            await fetch(`http://localhost:8379/api/accounts/${id}/topups`, {
+              headers: {
+                accept: "*/*",
+                "accept-language": "vi,en-US;q=0.9,en;q=0.8",
+                "content-type": "application/json",
               },
-            );
+              body: JSON.stringify({
+                account_id: description,
+                fee: Number(cashTrans),
+                server_id: "1",
+                channel: "dashboard",
+                trade_no: "",
+              }),
+              method: "POST",
+            });
           }
         } catch (err) {
           safeLog.error("Billing DB update failed", err);
+          return res
+            .status(400)
+            .json({ success: false, message: "Invalid payload - missing id" });
         }
 
         // TODO: enqueue job for email, inventory update, etc.
