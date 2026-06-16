@@ -14,6 +14,21 @@
             "database": "payments",
             "username": "root",
             "password": "root123"
+        },
+        {
+            "mysqlOptions": {
+                "authProtocol": "default",
+                "enableSsl": "Disabled"
+            },
+            "ssh": "Disabled",
+            "previewLimit": 50,
+            "server": "localhost",
+            "port": 3306,
+            "driver": "MySQL",
+            "name": "billing",
+            "database": "web",
+            "username": "wpbilling",
+            "password": "WpBilling_66tlbb!2026"
         }
     ]
 }

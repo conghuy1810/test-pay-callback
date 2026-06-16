@@ -10,8 +10,21 @@ const helmet = require("helmet");
 
 const app = express();
 const PORT = process.env.PORT || 5730;
+const DEFAULT_TOPUP_STATUS = Number(process.env.DEFAULT_TOPUP_STATUS ?? 1);
+
+const db = mysql.createPool({
+  host: process.env.DB_HOST || "localhost",
+  port: Number(process.env.DB_PORT || 3306),
+  user: process.env.DB_USER || "root",
+  password: process.env.DB_PASSWORD || process.env.DB_PASS || "",
+  database: process.env.DB_NAME || "payments",
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0,
+});
 
 app.set("trust proxy", 1);
+
 
 // ============================================================================
 // RATE LIMITERS
@@ -143,8 +156,6 @@ app.use((req, res, next) => {
 // SePay Configuration (set in .env)
 const SEPAY_ACCOUNT = "26254221";
 const SEPAY_BANK = "ACB";
-const USER_SERVICE_BASE_URL =
-  process.env.USER_SERVICE_BASE_URL || "http://149.28.153.144:8379";
 
 // Logs for callback requests (in-memory for non-webhook callbacks)
 const callbacks = [];
@@ -182,6 +193,20 @@ const safeLog = {
   },
 };
 
+async function testDbConnection() {
+  const conn = await db.getConnection();
+  try {
+    await conn.ping();
+    safeLog.info("Database connected", {
+      host: process.env.DB_HOST,
+      port: process.env.DB_PORT || 3306,
+      database: process.env.DB_NAME,
+    });
+  } finally {
+    conn.release();
+  }
+}
+
 // ============================================================================
 // VALIDATION SCHEMAS
 // ============================================================================
@@ -191,6 +216,11 @@ const orderSchema = joi.object({
     .try(joi.string().max(100), joi.number())
     .allow(null, ""),
   amount: joi.number().integer().positive().max(999999999).required(),
+  account_id: joi.number().integer().positive().required(),
+  channel: joi.string().max(32).allow(null, ""),
+  server_id: joi.number().integer().allow(null),
+  trade_no: joi.string().max(32).allow(null, ""),
+  note: joi.string().max(255).allow(null, ""),
 });
 
 const codeSchema = joi.object({
@@ -226,17 +256,37 @@ app.post(
   validateRequest(orderSchema),
   async (req, res) => {
     try {
-      const { des: code, amount } = req.body;
+      const { amount, accountId } = req.body;
 
+      const orderNo =
+        `ORD${Date.now()}${crypto.randomBytes(4).toString("hex")}`.slice(0, 32);
+
+      const [result] = await db.execute(
+        `INSERT INTO \`order\` \
+          (order_no, account_id, amount, status, channel, server_id, trade_no, note) \
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          orderNo,
+          accountId,
+          amount,
+          0,
+          "qrCode",
+          1,
+          null,
+          null,
+        ],
+      );
+      const encodedId = "TKCD" + result.insertId + " chuyen khoan";
       const qr = new URLSearchParams({
         acc: SEPAY_ACCOUNT,
         bank: SEPAY_BANK,
         amount: String(amount),
-        des: code,
+        des: encodedId,
       });
 
       res.json({
-        code,
+        success: true,
+        orderId: result.insertId,
         amount,
         bank: SEPAY_BANK,
         accountNumber: SEPAY_ACCOUNT,
@@ -251,12 +301,69 @@ app.post(
   },
 );
 
+// Order status check
+app.get("/v1/orders/:orderId/status", async (req, res) => {
+  try {
+    const orderId = Number(req.params.orderId);
+    if (!orderId || orderId <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid orderId",
+      });
+    }
+
+    const [rows] = await db.execute(
+      `SELECT id, order_no, account_id, amount, status, pay_time FROM \`order\` WHERE id = ? LIMIT 1`,
+      [orderId],
+    );
+
+    if (!rows || rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Order not found",
+      });
+    }
+
+    const order = rows[0];
+    res.json({
+      success: true,
+      orderId: order.id,
+      orderNo: order.order_no,
+      accountId: order.account_id,
+      amount: order.amount,
+      status: order.status === 1 ? "completed" : "pending",
+      paid: order.status === 1,
+      pay_time: order.pay_time,
+    });
+  } catch (err) {
+    safeLog.error("Order status lookup error", err);
+    res.status(500).json({ success: false, message: "Failed to fetch order status" });
+  }
+});
+
 // ============================================================================
 // HEALTH CHECK
 // ============================================================================
 // Health check endpoint
-app.get("/health", (req, res) => {
-  res.json({ ok: true, timestamp: new Date().toISOString() });
+app.get("/health", async (req, res) => {
+  let dbOk = false;
+  try {
+    const conn = await db.getConnection();
+    try {
+      await conn.ping();
+      dbOk = true;
+    } finally {
+      conn.release();
+    }
+  } catch (err) {
+    safeLog.error("Health check DB ping failed", err);
+  }
+
+  res.json({
+    ok: true,
+    db: dbOk,
+    timestamp: new Date().toISOString(),
+  });
 });
 
 // SePay webhook endpoint
@@ -326,15 +433,27 @@ app.post(
       // 4. Business logic: execute only on first INSERT
       if (data.transferType === "in") {
         // Update order status to 'paid'
-        // Update billing.tkbb.cash_refer when order code indicates a top-up (starts with NAPJ)
+        // Use orderId from the webhook description to load the order and call topup with its saved account
         try {
           const cashTrans = data.transferAmount;
           const description = data.content;
           const match = description.match(/TKCD(\d+)/);
           if (description && cashTrans && match) {
-            const id = parseInt(match[1], 10);
-            const toptupRq = await fetch(
-              `http://localhost:8379/api/accounts/${id}/topups`,
+            const orderId = parseInt(match[1], 10);
+            const [orders] = await db.execute(
+              `SELECT id, account_id FROM \`order\` WHERE id = ? LIMIT 1`,
+              [orderId],
+            );
+
+            if (!orders || orders.length === 0) {
+              return res
+                .status(404)
+                .json({ success: false, message: "Order not found" });
+            }
+
+            const order = orders[0];
+            const topupRq = await fetch(
+              `http://localhost:8379/api/accounts/${order.account_id}/topups`,
               {
                 headers: {
                   accept: "*/*",
@@ -342,7 +461,7 @@ app.post(
                   "content-type": "application/json",
                 },
                 body: JSON.stringify({
-                  account_id: id,
+                  account_id: order.account_id,
                   fee: Number(cashTrans),
                   server_id: "1",
                   channel: "qrCode",
@@ -351,6 +470,18 @@ app.post(
                 method: "POST",
               },
             );
+
+            if (topupRq.ok) {
+              await db.execute(
+                `UPDATE \`order\` SET status = ?, pay_time = NOW() WHERE id = ?`,
+                [1, orderId],
+              );
+            } else {
+              safeLog.error("Topup service returned non-ok status", {
+                status: topupRq.status,
+                orderId,
+              });
+            }
           }
         } catch (err) {
           return res
@@ -476,9 +607,16 @@ app.use((req, res) => {
 
 // Start server
 app.listen(PORT, async () => {
+  try {
+    await testDbConnection();
+  } catch (err) {
+    safeLog.error("Database connection failed on startup", err);
+  }
+
   safeLog.info("Server started", {
     port: PORT,
     env: process.env.NODE_ENV || "development",
+    defaultTopupStatus: DEFAULT_TOPUP_STATUS,
   });
   console.log(`
 ╔════════════════════════════════════════════════╗
@@ -489,8 +627,8 @@ app.listen(PORT, async () => {
 ║                                                ║
 ║   ENDPOINTS:                                   ║
 ║   GET  /health                  - Health check ║
-║   POST /api/orders              - Create order ║
-║   GET  /api/orders/:code/status - Check status ║
+║   POST /v1/orders               - Create order ║
+║   GET  /v1/orders/:orderId/status - Check order status ║
 ║   POST /webhook/sepay           - SePay webhook║
 ║   POST /callback                - Legacy call  ║
 ╚════════════════════════════════════════════════╝
