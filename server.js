@@ -23,26 +23,32 @@ const generalLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-const webhookLimiter = rateLimit({
-  windowMs: 60 * 1000, // 1 minute
-  max: 50, // Higher limit for webhook (SePay might retry)
+const webhookLimiter = ateLimit({
+  windowMs: 15 * 60 * 1000, // 15 phút
+  max: 100, // Giới hạn 100 request
+  standardHeaders: true,
+  legacyHeaders: false,
+
+  // 🔥 BƯỚC 1: Tắt tính năng tự động check IP của Express để không bị văng lỗi 'unknown'
+  validate: { ip: false },
+
+  // 🔥 BƯỚC 2: Tự định nghĩa cách lấy IP trực tiếp từ Header của Nginx
   keyGenerator: (req) => {
-    // 1. Lấy IP từ header X-Forwarded-For hoặc X-Real-IP do Nginx gửi sang
-    let ip = req.headers["x-forwarded-for"] || req.headers["x-real-ip"];
+    // Lấy IP từ X-Forwarded-For hoặc X-Real-IP
+    let clientIp = req.headers["x-forwarded-for"] || req.headers["x-real-ip"];
 
-    // 2. Nếu Nginx gửi dạng chuỗi danh sách (IP1, IP2), lấy cái đầu tiên
-    if (ip && ip.includes(",")) {
-      ip = ip.split(",")[0];
+    if (clientIp) {
+      // Nếu là chuỗi nhiều IP (do qua nhiều proxy), lấy cái đầu tiên
+      if (clientIp.includes(",")) {
+        clientIp = clientIp.split(",")[0];
+      }
+      return clientIp.trim();
     }
 
-    // 3. Nếu vẫn không lấy được (hoặc bằng 'unknown'), fallback về IP kết nối trực tiếp hoặc chuỗi mặc định
-    if (!ip || ip === "unknown") {
-      ip = req.socket.remoteAddress || "local-fallback-ip";
-    }
-
-    return ip.trim();
+    // Trường hợp bất khả kháng không thấy header (ví dụ gọi nội bộ không qua Nginx)
+    // Trả về IP kết nối trực tiếp hoặc một chuỗi cố định thay vì để undefined/unknown
+    return req.socket.remoteAddress || "127.0.0.1";
   },
-  message: "Webhook rate limit exceeded",
 });
 
 const strictLimiter = rateLimit({
@@ -261,7 +267,7 @@ app.post(
   express.raw({ type: "*/*" }),
   async (req, res) => {
     try {
-      const body = req.body.toString("utf8");
+      const body = req.body;
 
       if (!body) {
         return res.status(400).json({ success: false, message: "Empty body" });
