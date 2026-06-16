@@ -312,14 +312,6 @@ app.post(
 
       const sig = Buffer.from(signature);
       const exp = Buffer.from(expected);
-      console.log(
-        "Received signature:",
-        signature,
-        sig,
-        "expected signature:",
-        expected,
-        exp,
-      );
       if (sig.length !== exp.length || !crypto.timingSafeEqual(sig, exp)) {
         safeLog.warn("Invalid signature detected");
         return res
@@ -356,6 +348,12 @@ app.post(
         try {
           const cashTrans = data.transferAmount;
           const description = data.transferAmount;
+          console.log("Received SePay webhook for transaction", {
+            id: data.id,
+            code: data.code,
+            amount: cashTrans,
+            description,
+          });
           if (description && cashTrans) {
             await fetch(
               `http://localhost:8379/api/accounts/${description}/topups`,
