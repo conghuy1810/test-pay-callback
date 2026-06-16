@@ -159,9 +159,8 @@ const validateRequest = (schema) => (req, res, next) => {
 // ============================================================================
 // ORDERS API - Create orders with QR codes
 // ============================================================================
-const ordersRouter = express.Router();
 
-ordersRouter.post('/', strictLimiter, validateRequest(orderSchema), async (req, res) => {
+app.post('/v1/orders', strictLimiter, validateRequest(orderSchema), async (req, res) => {
   try {
     const { des: code, amount } = req.body;
 
@@ -185,28 +184,6 @@ ordersRouter.post('/', strictLimiter, validateRequest(orderSchema), async (req, 
   }
 });
 
-ordersRouter.get('/:code/status', validateRequest(joi.object({ code: joi.string().max(100).required() }).keys({ code: joi.any() }).pattern(joi.string(), joi.any())), async (req, res) => {
-  try {
-    const code = req.params.code;
-    
-    // Validate code parameter
-    const { error, value } = joi.string().max(100).required().validate(code);
-    if (error) {
-      return res.status(400).json({ success: false, message: 'Invalid code parameter' });
-    }
-
-    const [rows] = await db.execute(
-      'SELECT status FROM orders WHERE code = ?',
-      [value]
-    );
-    res.json({ status: rows[0]?.status ?? 'not_found' });
-  } catch (err) {
-    safeLog.error('Status check error', err);
-    res.status(500).json({ success: false, message: 'Failed to check status' });
-  }
-});
-
-app.use('/v1/orders', ordersRouter);
 
 // ============================================================================
 // HEALTH CHECK
