@@ -23,7 +23,7 @@ const generalLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-const webhookLimiter = ateLimit({
+const webhookLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 phút
   max: 100, // Giới hạn 100 request
   standardHeaders: true,
