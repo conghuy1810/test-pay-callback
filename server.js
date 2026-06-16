@@ -1,18 +1,16 @@
-require('dotenv').config();
-const express = require('express');
-const bodyParser = require('body-parser');
-const crypto = require('crypto');
-const mysql = require('mysql2/promise');
-const rateLimit = require('express-rate-limit');
-const joi = require('joi');
-const helmet = require('helmet');
+require("dotenv").config();
+const express = require("express");
+const bodyParser = require("body-parser");
+const crypto = require("crypto");
+const mysql = require("mysql2/promise");
+const rateLimit = require("express-rate-limit");
+const joi = require("joi");
+const helmet = require("helmet");
 
 const app = express();
 const PORT = process.env.PORT || 5730;
 
-app.set('trust proxy', 1);
-
-
+app.set("trust proxy", 1);
 
 // ============================================================================
 // RATE LIMITERS
@@ -20,7 +18,7 @@ app.set('trust proxy', 1);
 const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 100, // limit each IP to 100 requests per windowMs
-  message: 'Too many requests from this IP, please try again later.',
+  message: "Too many requests from this IP, please try again later.",
   standardHeaders: true, // Return rate limit info in `RateLimit-*` headers
   legacyHeaders: false,
 });
@@ -30,35 +28,37 @@ const webhookLimiter = rateLimit({
   max: 50, // Higher limit for webhook (SePay might retry)
   skip: (req) => {
     // Skip rate limit if signature is valid (will be verified later)
-    return !req.headers['x-sepay-signature'];
+    return !req.headers["x-sepay-signature"];
   },
-  message: 'Webhook rate limit exceeded',
+  message: "Webhook rate limit exceeded",
 });
 
 const strictLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 10, // Very strict for order creation
-  message: 'Too many order creation requests, please try again later.',
+  message: "Too many order creation requests, please try again later.",
 });
 
 // Middleware
-app.use(bodyParser.json({ limit: '1mb' })); // Limit payload size
-app.use(bodyParser.urlencoded({ extended: true, limit: '1mb' }));
+app.use(bodyParser.json({ limit: "1mb" })); // Limit payload size
+app.use(bodyParser.urlencoded({ extended: true, limit: "1mb" }));
 
 // Security: Helmet middleware (sets various HTTP headers)
-app.use(helmet({
-  contentSecurityPolicy: {
-    directives: {
-      defaultSrc: ["'self'"],
-      scriptSrc: ["'self'"],
-      styleSrc: ["'self'", "'unsafe-inline'"],
-      imgSrc: ["'self'", 'data:', 'https:'],
-      connectSrc: ["'self'"],
-    }
-  },
-  referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
-  hsts: { maxAge: 31536000, includeSubDomains: true, preload: true } // HTTPS only
-}));
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        imgSrc: ["'self'", "data:", "https:"],
+        connectSrc: ["'self'"],
+      },
+    },
+    referrerPolicy: { policy: "strict-origin-when-cross-origin" },
+    hsts: { maxAge: 31536000, includeSubDomains: true, preload: true }, // HTTPS only
+  }),
+);
 
 // Security: Prevent parameter pollution
 app.use((req, res, next) => {
@@ -75,18 +75,30 @@ app.use(generalLimiter);
 
 // CORS support - restrict to common origins
 app.use((req, res, next) => {
-  const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',') || ['localhost', '127.0.0.1'];
-  const origin = req.get('origin');
-  
-  if (!origin || allowedOrigins.some(allowed => origin.includes(allowed))) {
-    res.header('Access-Control-Allow-Origin', origin || 'http://localhost:3000');
-  }
-  
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
-  res.header('Access-Control-Allow-Credentials', 'true');
+  const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(",") || [
+    "localhost",
+    "127.0.0.1",
+  ];
+  const origin = req.get("origin");
 
-  if (req.method === 'OPTIONS') {
+  if (!origin || allowedOrigins.some((allowed) => origin.includes(allowed))) {
+    res.header(
+      "Access-Control-Allow-Origin",
+      origin || "http://localhost:3000",
+    );
+  }
+
+  res.header(
+    "Access-Control-Allow-Methods",
+    "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+  );
+  res.header(
+    "Access-Control-Allow-Headers",
+    "Origin, X-Requested-With, Content-Type, Accept, Authorization",
+  );
+  res.header("Access-Control-Allow-Credentials", "true");
+
+  if (req.method === "OPTIONS") {
     return res.sendStatus(204);
   }
 
@@ -94,9 +106,10 @@ app.use((req, res, next) => {
 });
 
 // SePay Configuration (set in .env)
-const SEPAY_ACCOUNT = '26254221';
-const SEPAY_BANK = 'ACB';
-const USER_SERVICE_BASE_URL = process.env.USER_SERVICE_BASE_URL || 'http://149.28.153.144:8379';
+const SEPAY_ACCOUNT = "26254221";
+const SEPAY_BANK = "ACB";
+const USER_SERVICE_BASE_URL =
+  process.env.USER_SERVICE_BASE_URL || "http://149.28.153.144:8379";
 
 // Logs for callback requests (in-memory for non-webhook callbacks)
 const callbacks = [];
@@ -109,46 +122,58 @@ const safeLog = {
   info: (msg, data = {}) => {
     const safe = {};
     for (const [k, v] of Object.entries(data)) {
-      if (['signature', 'password', 'secret', 'token', 'authorization', 'body'].includes(k.toLowerCase())) {
-        safe[k] = '[REDACTED]';
+      if (
+        [
+          "signature",
+          "password",
+          "secret",
+          "token",
+          "authorization",
+          "body",
+        ].includes(k.toLowerCase())
+      ) {
+        safe[k] = "[REDACTED]";
       } else {
         safe[k] = v;
       }
     }
-    console.log(`[INFO] ${msg}`, Object.keys(safe).length > 0 ? safe : '');
+    console.log(`[INFO] ${msg}`, Object.keys(safe).length > 0 ? safe : "");
   },
   error: (msg, err) => {
     console.error(`[ERROR] ${msg}`, err?.message || err);
   },
   warn: (msg, data = {}) => {
     console.warn(`[WARN] ${msg}`, data);
-  }
+  },
 };
 
 // ============================================================================
 // VALIDATION SCHEMAS
 // ============================================================================
 const orderSchema = joi.object({
-  des: joi.string().max(100).allow(null, ''),
-  amount: joi.number().integer().positive().max(999999999).required()
+  des: joi
+    .alternatives()
+    .try(joi.string().max(100), joi.number())
+    .allow(null, ""),
+  amount: joi.number().integer().positive().max(999999999).required(),
 });
 
 const codeSchema = joi.object({
-  code: joi.string().max(100).required()
+  code: joi.string().max(100).required(),
 });
 
 // Middleware to validate request
 const validateRequest = (schema) => (req, res, next) => {
   const { error, value } = schema.validate(req.body, {
     abortEarly: true,
-    stripUnknown: true // Remove unknown fields
+    stripUnknown: true, // Remove unknown fields
   });
 
   if (error) {
     return res.status(400).json({
       success: false,
-      message: 'Invalid input',
-      details: error.details.map(d => d.message)
+      message: "Invalid input",
+      details: error.details.map((d) => d.message),
     });
   }
 
@@ -160,184 +185,230 @@ const validateRequest = (schema) => (req, res, next) => {
 // ORDERS API - Create orders with QR codes
 // ============================================================================
 
-app.post('/v1/orders', strictLimiter, validateRequest(orderSchema), async (req, res) => {
-  try {
-    const { des: code, amount } = req.body;
+app.post(
+  "/v1/orders",
+  strictLimiter,
+  validateRequest(orderSchema),
+  async (req, res) => {
+    try {
+      const { des: code, amount } = req.body;
 
-    const qr = new URLSearchParams({
-      acc: SEPAY_ACCOUNT,
-      bank: SEPAY_BANK,
-      amount: String(amount),
-      des: code,
-    });
+      const qr = new URLSearchParams({
+        acc: SEPAY_ACCOUNT,
+        bank: SEPAY_BANK,
+        amount: String(amount),
+        des: code,
+      });
 
-    res.json({
-      code,
-      amount,
-      bank: SEPAY_BANK,
-      accountNumber: SEPAY_ACCOUNT,
-      qrUrl: `https://qr.sepay.vn/img?${qr}`,
-    });
-  } catch (err) {
-    safeLog.error('Order creation error', err);
-    res.status(500).json({ success: false, message: 'Failed to create order' });
-  }
-});
-
+      res.json({
+        code,
+        amount,
+        bank: SEPAY_BANK,
+        accountNumber: SEPAY_ACCOUNT,
+        qrUrl: `https://qr.sepay.vn/img?${qr}`,
+      });
+    } catch (err) {
+      safeLog.error("Order creation error", err);
+      res
+        .status(500)
+        .json({ success: false, message: "Failed to create order" });
+    }
+  },
+);
 
 // ============================================================================
 // HEALTH CHECK
 // ============================================================================
 // Health check endpoint
-app.get('/health', (req, res) => {
+app.get("/health", (req, res) => {
   res.json({ ok: true, timestamp: new Date().toISOString() });
 });
 
 // SePay webhook endpoint
-app.post('/webhook/sepay', webhookLimiter, express.raw({ type: '*/*' }), async (req, res) => {
-  try {
-    const body = req.body.toString('utf8');
-    
-    if (!body) {
-      return res.status(400).json({ success: false, message: 'Empty body' });
-    }
-
-    // Validate body is valid JSON before processing
-    let data;
+app.post(
+  "/webhook/sepay",
+  webhookLimiter,
+  express.raw({ type: "*/*" }),
+  async (req, res) => {
     try {
-      data = JSON.parse(body);
-    } catch (err) {
-      return res.status(400).json({ success: false, message: 'Invalid JSON' });
-    }
+      const body = req.body.toString("utf8");
 
-    // 1. HMAC-SHA256 signature verification
-    const signature = req.headers['x-sepay-signature'] ?? '';
-    const timestamp = Number(req.headers['x-sepay-timestamp'] ?? 0);
-    const secret = process.env.SEPAY_WEBHOOK_SECRET;
+      if (!body) {
+        return res.status(400).json({ success: false, message: "Empty body" });
+      }
 
-    if (!secret) {
-      safeLog.error('Missing SEPAY_WEBHOOK_SECRET in environment', null);
-      return res.status(500).json({ success: false, message: 'Server configuration error' });
-    }
-
-    // Anti-replay: timestamp must be within 5 minutes
-    if (Math.abs(Date.now() / 1000 - timestamp) > 300) {
-      return res.status(401).json({ success: false, message: 'Request expired' });
-    }
-
-    // Verify HMAC-SHA256
-    const expected = 'sha256=' + crypto.createHmac('sha256', secret)
-      .update(`${timestamp}.${body}`)
-      .digest('hex');
-
-    const sig = Buffer.from(signature);
-    const exp = Buffer.from(expected);
-
-    if (sig.length !== exp.length || !crypto.timingSafeEqual(sig, exp)) {
-      safeLog.warn('Invalid signature detected');
-      return res.status(401).json({ success: false, message: 'Invalid signature' });
-    }
-
-    if (!data?.id) {
-      return res.status(400).json({ success: false, message: 'Invalid payload - missing id' });
-    }
-
-    // Validate critical fields
-    if (typeof data.id !== 'string' || data.id.length > 255) {
-      return res.status(400).json({ success: false, message: 'Invalid transaction ID' });
-    }
-
-    if (data.transferAmount && (typeof data.transferAmount !== 'number' || data.transferAmount <= 0)) {
-      return res.status(400).json({ success: false, message: 'Invalid transfer amount' });
-    }
-
-    // 4. Business logic: execute only on first INSERT
-    if (data.transferType === 'in' && data.code) {
-      // Update order status to 'paid'
-      // Update billing.tkbb.cash_refer when order code indicates a top-up (starts with NAPJ)
+      // Validate body is valid JSON before processing
+      let data;
       try {
+        data = JSON.parse(body);
+      } catch (err) {
+        return res
+          .status(400)
+          .json({ success: false, message: "Invalid JSON" });
+      }
+
+      // 1. HMAC-SHA256 signature verification
+      const signature = req.headers["x-sepay-signature"] ?? "";
+      const timestamp = Number(req.headers["x-sepay-timestamp"] ?? 0);
+      const secret = process.env.SEPAY_WEBHOOK_SECRET;
+
+      if (!secret) {
+        safeLog.error("Missing SEPAY_WEBHOOK_SECRET in environment", null);
+        return res
+          .status(500)
+          .json({ success: false, message: "Server configuration error" });
+      }
+
+      // Anti-replay: timestamp must be within 5 minutes
+      if (Math.abs(Date.now() / 1000 - timestamp) > 300) {
+        return res
+          .status(401)
+          .json({ success: false, message: "Request expired" });
+      }
+
+      // Verify HMAC-SHA256
+      const expected =
+        "sha256=" +
+        crypto
+          .createHmac("sha256", secret)
+          .update(`${timestamp}.${body}`)
+          .digest("hex");
+
+      const sig = Buffer.from(signature);
+      const exp = Buffer.from(expected);
+
+      if (sig.length !== exp.length || !crypto.timingSafeEqual(sig, exp)) {
+        safeLog.warn("Invalid signature detected");
+        return res
+          .status(401)
+          .json({ success: false, message: "Invalid signature" });
+      }
+
+      if (!data?.id) {
+        return res
+          .status(400)
+          .json({ success: false, message: "Invalid payload - missing id" });
+      }
+
+      // Validate critical fields
+      if (typeof data.id !== "string" || data.id.length > 255) {
+        return res
+          .status(400)
+          .json({ success: false, message: "Invalid transaction ID" });
+      }
+
+      if (
+        data.transferAmount &&
+        (typeof data.transferAmount !== "number" || data.transferAmount <= 0)
+      ) {
+        return res
+          .status(400)
+          .json({ success: false, message: "Invalid transfer amount" });
+      }
+
+      // 4. Business logic: execute only on first INSERT
+      if (data.transferType === "in" && data.code) {
+        // Update order status to 'paid'
+        // Update billing.tkbb.cash_refer when order code indicates a top-up (starts with NAPJ)
+        try {
           const cashTrans = data.transferAmount;
           const description = data.transferAmount;
           if (description && cashTrans) {
-            await fetch(`http://localhost:8379/api/accounts/${description}/topups`, {
-              headers: {
-                accept: "*/*",
-                "accept-language": "vi,en-US;q=0.9,en;q=0.8",
-                "content-type": "application/json"
+            await fetch(
+              `http://localhost:8379/api/accounts/${description}/topups`,
+              {
+                headers: {
+                  accept: "*/*",
+                  "accept-language": "vi,en-US;q=0.9,en;q=0.8",
+                  "content-type": "application/json",
+                },
+                body: JSON.stringify({
+                  account_id: description,
+                  fee: Number(cashTrans),
+                  server_id: "1",
+                  channel: "dashboard",
+                  trade_no: "",
+                }),
+                method: "POST",
               },
-              body: JSON.stringify({
-                account_id: description,
-                fee: Number(cashTrans),
-                server_id: "1",
-                channel: "dashboard",
-                trade_no: ""
-              }),
-              method: "POST",
-            });
+            );
           }
-      } catch (err) {
-        safeLog.error('Billing DB update failed', err);
+        } catch (err) {
+          safeLog.error("Billing DB update failed", err);
+        }
+
+        // TODO: enqueue job for email, inventory update, etc.
       }
 
-      // TODO: enqueue job for email, inventory update, etc.
+      res.json({ success: true });
+    } catch (err) {
+      safeLog.error("SePay webhook error", err);
+      res.status(500).json({ success: false, message: "Internal error" });
     }
-
-    res.json({ success: true });
-  } catch (err) {
-    safeLog.error('SePay webhook error', err);
-    res.status(500).json({ success: false, message: 'Internal error' });
-  }
-});
+  },
+);
 
 // Legacy callback endpoint (for backwards compatibility)
-app.post('/callback', generalLimiter, (req, res) => {
+app.post("/callback", generalLimiter, (req, res) => {
   // Validate callback body size
   if (!req.body || Object.keys(req.body).length === 0) {
-    return res.status(400).json({ success: false, message: 'Empty callback body' });
+    return res
+      .status(400)
+      .json({ success: false, message: "Empty callback body" });
   }
 
   const callbackData = {
     receivedAt: new Date().toISOString(),
     body: req.body,
     headers: req.headers,
-    ip: req.ip
+    ip: req.ip,
   };
 
   callbacks.push(callbackData);
-  safeLog.info('Legacy callback received', { ip: callbackData.ip, body_keys: Object.keys(callbackData.body) });
+  safeLog.info("Legacy callback received", {
+    ip: callbackData.ip,
+    body_keys: Object.keys(callbackData.body),
+  });
 
   res.status(200).json({
     success: true,
-    message: 'Callback received successfully',
-    id: callbacks.length
+    message: "Callback received successfully",
+    id: callbacks.length,
   });
 });
 
-app.post('/v1/get-user', async (req, res) => {
+app.post("/v1/get-user", async (req, res) => {
   try {
     const { user } = req.body;
     const usersResponse = await fetch(
       `http://localhost:8379/api/users?page=1&limit=50&search=${encodeURIComponent(user)}`,
       {
-        method: 'GET',
+        method: "GET",
         headers: {
-          accept: '*/*',
-          'accept-language': 'vi,en-US;q=0.9,en;q=0.8',
+          accept: "*/*",
+          "accept-language": "vi,en-US;q=0.9,en;q=0.8",
         },
-      }
+      },
     );
 
     if (!usersResponse.ok) {
       const errorText = await usersResponse.text();
-      safeLog.error('User service returned error', { status: usersResponse.status, body: errorText });
-      return res.status(502).json({ success: false, message: 'Failed to fetch user data' });
+      safeLog.error("User service returned error", {
+        status: usersResponse.status,
+        body: errorText,
+      });
+      return res
+        .status(502)
+        .json({ success: false, message: "Failed to fetch user data" });
     }
 
     const usersData = await usersResponse.json();
     const resUser = usersData.items?.[0];
 
     if (!resUser) {
-      return res.status(404).json({ success: false, message: 'User not found' });
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
     }
 
     res.status(200).json({
@@ -345,28 +416,28 @@ app.post('/v1/get-user', async (req, res) => {
       id: resUser.id,
     });
   } catch (err) {
-    safeLog.error('Failed to fetch user', err);
-    res.status(500).json({ success: false, message: 'Internal server error' });
+    safeLog.error("Failed to fetch user", err);
+    res.status(500).json({ success: false, message: "Internal server error" });
   }
 });
 
 // 404 handler
 app.use((req, res) => {
-  res.status(404).json({ error: 'Not found' });
+  res.status(404).json({ error: "Not found" });
 });
 
 // Start server
 app.listen(PORT, async () => {
-  safeLog.info('Server started', { 
-    port: PORT, 
-    env: process.env.NODE_ENV || 'development'
+  safeLog.info("Server started", {
+    port: PORT,
+    env: process.env.NODE_ENV || "development",
   });
   console.log(`
 ╔════════════════════════════════════════════════╗
 ║   Payment Callback Server Started             ║
 ╠════════════════════════════════════════════════╣
 ║   Server running on: http://localhost:${PORT}     ║
-║   Environment: ${(process.env.NODE_ENV || 'development').padEnd(29)}║
+║   Environment: ${(process.env.NODE_ENV || "development").padEnd(29)}║
 ║                                                ║
 ║   ENDPOINTS:                                   ║
 ║   GET  /health                  - Health check ║
