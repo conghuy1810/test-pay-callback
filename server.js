@@ -318,7 +318,7 @@ app.post(
           .status(401)
           .json({ success: false, message: "Invalid signature" });
       }
-
+      console.log("Webhook signature verified successfully", data);
       if (!data?.id) {
         return res
           .status(400)
