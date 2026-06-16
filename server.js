@@ -280,22 +280,14 @@ app.post(
       if (!body) {
         return res.status(400).json({ success: false, message: "Empty body" });
       }
-
       // Validate body is valid JSON before processing
       const data = body;
-      console.log("Received SePay webhook post", {
-        headers: req.headers,
-        data,
-      });
+      
       // 1. HMAC-SHA256 signature verification
       const signature = req.headers["x-sepay-signature"] ?? "";
       const timestamp = Number(req.headers["x-sepay-timestamp"] ?? 0);
       const secret = process.env.SEPAY_WEBHOOK_SECRET;
-      console.log("Verifying signature", {
-        signature,
-        timestamp,
-        secret: secret,
-      });
+      
       if (!secret) {
         safeLog.error("Missing SEPAY_WEBHOOK_SECRET in environment", null);
         return res
@@ -309,13 +301,13 @@ app.post(
           .status(401)
           .json({ success: false, message: "Request expired" });
       }
-
+      const rawBody = req.body.toString("utf-8");
       // Verify HMAC-SHA256
       const expected =
         "sha256=" +
         crypto
           .createHmac("sha256", secret)
-          .update(`${timestamp}.${body}`)
+          .update(`${timestamp}.${rawBody}`)
           .digest("hex");
 
       const sig = Buffer.from(signature);
