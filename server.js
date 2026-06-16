@@ -10,7 +10,7 @@ const helmet = require('helmet');
 const app = express();
 const PORT = process.env.PORT || 5730;
 
-
+app.set('trust proxy', 1);
 
 
 
