@@ -272,6 +272,7 @@ app.post(
       try {
         data = JSON.parse(body);
       } catch (err) {
+        console.log("Invalid JSON received in SePay webhook", { body }, err);
         return res
           .status(400)
           .json({ success: false, message: "Invalid JSON" });
