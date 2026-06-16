@@ -254,7 +254,11 @@ app.post(
       const signature = req.headers["x-sepay-signature"] ?? "";
       const timestamp = Number(req.headers["x-sepay-timestamp"] ?? 0);
       const secret = process.env.SEPAY_WEBHOOK_SECRET;
-
+      console.log("Verifying signature", {
+        signature,
+        timestamp,
+        secret: secret,
+      });
       if (!secret) {
         safeLog.error("Missing SEPAY_WEBHOOK_SECRET in environment", null);
         return res
@@ -394,6 +398,63 @@ app.get(
         headers: req.headers,
         body,
       });
+      // Validate body is valid JSON before processing
+      let data;
+      try {
+        data = JSON.parse(body);
+      } catch (err) {
+        return res
+          .status(400)
+          .json({ success: false, message: "Invalid JSON" });
+      }
+
+      // 1. HMAC-SHA256 signature verification
+      const signature = req.headers["x-sepay-signature"] ?? "";
+      const timestamp = Number(req.headers["x-sepay-timestamp"] ?? 0);
+      const secret = process.env.SEPAY_WEBHOOK_SECRET;
+      console.log("Verifying signature", {
+        signature,
+        timestamp,
+        secret: secret,
+      });
+      if (!secret) {
+        safeLog.error("Missing SEPAY_WEBHOOK_SECRET in environment", null);
+        return res
+          .status(500)
+          .json({ success: false, message: "Server configuration error" });
+      }
+
+      // Anti-replay: timestamp must be within 5 minutes
+      if (Math.abs(Date.now() / 1000 - timestamp) > 300) {
+        return res
+          .status(401)
+          .json({ success: false, message: "Request expired" });
+      }
+
+      // Verify HMAC-SHA256
+      const expected =
+        "sha256=" +
+        crypto
+          .createHmac("sha256", secret)
+          .update(`${timestamp}.${body}`)
+          .digest("hex");
+
+      const sig = Buffer.from(signature);
+      const exp = Buffer.from(expected);
+
+      if (sig.length !== exp.length || !crypto.timingSafeEqual(sig, exp)) {
+        safeLog.warn("Invalid signature detected");
+        return res
+          .status(401)
+          .json({ success: false, message: "Invalid signature" });
+      }
+
+      if (!data?.id) {
+        return res
+          .status(400)
+          .json({ success: false, message: "Invalid payload - missing id" });
+      }
+
       res.json({ success: true });
     } catch (err) {
       safeLog.error("SePay webhook error", err);
