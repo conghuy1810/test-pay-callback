@@ -207,6 +207,35 @@ async function testDbConnection() {
   }
 }
 
+async function ensureOrdersTable() {
+  const conn = await db.getConnection();
+  try {
+    await conn.execute(`
+      CREATE TABLE IF NOT EXISTS \`orders\` (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+        order_no VARCHAR(64) NOT NULL,
+        account_id BIGINT UNSIGNED NOT NULL,
+        amount DECIMAL(18,2) NOT NULL DEFAULT 0,
+        status TINYINT UNSIGNED NOT NULL DEFAULT 0,
+        channel VARCHAR(32) NOT NULL DEFAULT '',
+        server_id INT UNSIGNED NOT NULL DEFAULT 1,
+        trade_no VARCHAR(128) DEFAULT NULL,
+        note TEXT DEFAULT NULL,
+        pay_time DATETIME NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        UNIQUE KEY uq_order_no (order_no),
+        KEY idx_account_id (account_id),
+        KEY idx_status (status)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+    safeLog.info("Ensured orders table exists");
+  } finally {
+    conn.release();
+  }
+}
+
 // ============================================================================
 // VALIDATION SCHEMAS
 // ============================================================================
@@ -254,7 +283,7 @@ app.post(
         `ORD${Date.now()}${crypto.randomBytes(4).toString("hex")}`.slice(0, 32);
 
       const [result] = await db.execute(
-        `INSERT INTO \`order\` \
+        `INSERT INTO \`orders\` \
           (order_no, account_id, amount, status, channel, server_id, trade_no, note) \
           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         [
@@ -305,7 +334,7 @@ app.get("/v1/orders/:orderId/status", async (req, res) => {
     }
 
     const [rows] = await db.execute(
-      `SELECT id, order_no, account_id, amount, status, pay_time FROM \`order\` WHERE id = ? LIMIT 1`,
+      `SELECT id, order_no, account_id, amount, status, pay_time FROM \`orders\` WHERE id = ? LIMIT 1`,
       [orderId],
     );
 
@@ -433,7 +462,7 @@ app.post(
           if (description && cashTrans && match) {
             const orderId = parseInt(match[1], 10);
             const [orders] = await db.execute(
-              `SELECT id, account_id FROM \`order\` WHERE id = ? LIMIT 1`,
+              `SELECT id, account_id FROM \`orders\` WHERE id = ? LIMIT 1`,
               [orderId],
             );
 
@@ -465,7 +494,7 @@ app.post(
 
             if (topupRq.ok) {
               await db.execute(
-                `UPDATE \`order\` SET status = ?, pay_time = NOW() WHERE id = ?`,
+                `UPDATE \`orders\` SET status = ?, pay_time = NOW() WHERE id = ?`,
                 [1, orderId],
               );
             } else {
@@ -601,8 +630,9 @@ app.use((req, res) => {
 app.listen(PORT, async () => {
   try {
     await testDbConnection();
+    await ensureOrdersTable();
   } catch (err) {
-    safeLog.error("Database connection failed on startup", err);
+    safeLog.error("Database startup failed", err);
   }
 
   safeLog.info("Server started", {
