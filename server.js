@@ -211,16 +211,8 @@ async function testDbConnection() {
 // VALIDATION SCHEMAS
 // ============================================================================
 const orderSchema = joi.object({
-  des: joi
-    .alternatives()
-    .try(joi.string().max(100), joi.number())
-    .allow(null, ""),
   amount: joi.number().integer().positive().max(999999999).required(),
-  account_id: joi.number().integer().positive().required(),
-  channel: joi.string().max(32).allow(null, ""),
-  server_id: joi.number().integer().allow(null),
-  trade_no: joi.string().max(32).allow(null, ""),
-  note: joi.string().max(255).allow(null, ""),
+  accountId: joi.number().integer().positive().required(),
 });
 
 const codeSchema = joi.object({
