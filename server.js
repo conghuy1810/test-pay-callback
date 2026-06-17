@@ -332,12 +332,12 @@ app.get("/v1/orders/:orderId/status", async (req, res) => {
         message: "Invalid orderId",
       });
     }
-
+    console.log("Checking order status for orderId:", orderId);
     const [rows] = await db.execute(
       `SELECT id, order_no, account_id, amount, status, pay_time FROM \`orders\` WHERE id = ? LIMIT 1`,
       [orderId],
     );
-
+    console.log("Database query result:", rows);
     if (!rows || rows.length === 0) {
       return res.status(404).json({
         success: false,
