@@ -309,6 +309,7 @@ app.post(
         success: true,
         orderId: result.insertId,
         amount,
+        code: encodedId,
         bank: SEPAY_BANK,
         accountNumber: SEPAY_ACCOUNT,
         qrUrl: `https://qr.sepay.vn/img?${qr}`,
