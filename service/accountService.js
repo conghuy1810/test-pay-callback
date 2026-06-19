@@ -466,7 +466,7 @@ class AccountService {
     return `
       SELECT
         o.id, o.order_no, o.account_id, o.amount, o.status, o.channel,
-        o.server_id, o.trade_no, o.note, o.create_time, o.update_time, o.pay_time,
+        o.server_id, o.trade_no, o.note, o.pay_time,
         a.name AS account_username
       FROM orders o
       LEFT JOIN account a ON a.id = o.account_id

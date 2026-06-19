@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js",
-    "start:dev": "DOTENV_CONFIG_PATH=.env.dev node server.js"
+    "start:dev": "DOTENV_CONFIG_PATH=.env.dev node server.js",
+    "migrate": "node run-migration.js"
   },
   "keywords": [
     "callback",

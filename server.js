@@ -70,14 +70,14 @@ const generalLimiter = rateLimit({
 //     return ipKeyGenerator(ip);
 //   },
 // });
-// async function main() {
-//   const [rows] = await db.execute(
-//     "SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_DEFAULT FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'orders' ORDER BY ORDINAL_POSITION",
-//     [process.env.DB_NAME],
-//   );
-//   console.table(rows);
-// }
-// main().catch(console.error);
+async function main() {
+  const [rows] = await db.execute(
+    "SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_DEFAULT FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'orders' ORDER BY ORDINAL_POSITION",
+    [process.env.DB_NAME],
+  );
+  console.table(rows);
+}
+main().catch(console.error);
 const strictLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 phút
   max: 100, // Giới hạn 100 requests mỗi IP
@@ -458,7 +458,7 @@ app.post(
               channel: "qrCode",
               trade_no: description.split(" ")[0],
               status: 1,
-              orderId
+              orderId,
             };
             const topupRq = await accountService.topup(
               Number(order.account_id),
@@ -785,12 +785,36 @@ app.use((err, req, res, next) => {
 app.use((req, res) => {
   res.status(404).json({ error: "Not found" });
 });
+const ORDERS_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS orders (
+    id int(11) NOT NULL AUTO_INCREMENT,
+    order_no varchar(32) NOT NULL,
+    account_id int(11) NOT NULL,
+    amount int(11) NOT NULL,
+    status tinyint(4) NOT NULL DEFAULT 0,
+    channel varchar(32) DEFAULT NULL,
+    server_id int(11) DEFAULT NULL,
+    trade_no varchar(32) DEFAULT NULL,
+    note varchar(255) DEFAULT NULL,
+    create_time datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    update_time datetime DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+    pay_time datetime DEFAULT NULL,
+    PRIMARY KEY (id),
+    UNIQUE KEY order_no (order_no),
+    KEY idx_account_id (account_id),
+    KEY idx_create_time (create_time),
+    KEY idx_status (status)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8
+`;
 
+async function ensureOrdersTable(pool) {
+  await pool.query(ORDERS_TABLE_SQL);
+}
 // Start server
 app.listen(PORT, async () => {
   try {
     await testDbConnection();
-    // await ensureOrdersTable();
+    await ensureOrdersTable();
   } catch (err) {
     safeLog.error("Database startup failed", err);
   }
