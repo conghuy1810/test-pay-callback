@@ -486,32 +486,13 @@ app.post(
 app.post("/v1/get-user", async (req, res) => {
   try {
     const { user } = req.body;
-    const usersResponse = await fetch(
-      `http://localhost:8379/api/users?page=1&limit=50&search=${encodeURIComponent(user)}`,
-      {
-        method: "GET",
-        headers: {
-          accept: "*/*",
-          "accept-language": "vi,en-US;q=0.9,en;q=0.8",
-        },
-      },
-    );
+    const usersResponse = await accountService.listAccounts({
+      page: 1,
+      limit: 10,
+      search: encodeURIComponent(user),
+    });
 
-    if (!usersResponse.ok) {
-      const errorText = await usersResponse.text();
-      safeLog.error("User service returned error", {
-        status: usersResponse.status,
-        body: errorText,
-      });
-      return res
-        .status(502)
-        .json({ success: false, message: "Failed to fetch user data" });
-    }
-
-    const usersData = await usersResponse.json();
-    const resUser = usersData.items?.[0];
-
-    if (!resUser) {
+    if (!usersResponse.total || usersResponse.total === 0) {
       return res
         .status(404)
         .json({ success: false, message: "User not found" });
@@ -519,7 +500,7 @@ app.post("/v1/get-user", async (req, res) => {
 
     res.status(200).json({
       success: true,
-      id: resUser.id,
+      id: usersResponse.items,
     });
   } catch (err) {
     safeLog.error("Failed to fetch user", err);
@@ -597,7 +578,7 @@ const accountUpdateSchema = joi
   .min(1);
 
 app.post(
-  "/api/accounts",
+  "/v1/accounts",
   validateRequest(accountCreateSchema),
   asyncHandler(async (req, res) => {
     const account = await accountService.createAccount(req.body);
@@ -606,7 +587,7 @@ app.post(
 );
 
 app.get(
-  "/api/accounts",
+  "/v1/accounts",
   asyncHandler(async (req, res) => {
     const result = await accountService.listAccounts(req.query);
     res.json({ success: true, ...result });
@@ -614,7 +595,7 @@ app.get(
 );
 
 app.get(
-  "/api/accounts/:id",
+  "/v1/accounts/:id",
   asyncHandler(async (req, res) => {
     const account = await accountService.getAccountById(Number(req.params.id));
     res.json({ success: true, account });
@@ -622,7 +603,7 @@ app.get(
 );
 
 app.put(
-  "/api/accounts/:id",
+  "/v1/accounts/:id",
   validateRequest(accountUpdateSchema),
   asyncHandler(async (req, res) => {
     const account = await accountService.updateAccount(
@@ -634,7 +615,7 @@ app.put(
 );
 
 app.delete(
-  "/api/accounts/:id",
+  "/v1/accounts/:id",
   asyncHandler(async (req, res) => {
     const account = await accountService.softDeleteAccount(
       Number(req.params.id),
@@ -644,7 +625,7 @@ app.delete(
 );
 
 app.get(
-  "/api/accounts/:id/payments",
+  "/v1/accounts/:id/payments",
   asyncHandler(async (req, res) => {
     const payments = await accountService.listPaymentsByAccount(
       Number(req.params.id),
@@ -655,7 +636,7 @@ app.get(
 );
 
 app.get(
-  "/api/accounts/:id/orders",
+  "/v1/accounts/:id/orders",
   asyncHandler(async (req, res) => {
     const orders = await accountService.listOrdersByAccount(
       Number(req.params.id),
@@ -666,7 +647,7 @@ app.get(
 );
 
 app.get(
-  "/api/payments/:tradeNo",
+  "/v1/payments/:tradeNo",
   asyncHandler(async (req, res) => {
     const payment = await accountService.getPayment(req.params.tradeNo);
     res.json({ success: true, payment });
@@ -674,7 +655,7 @@ app.get(
 );
 
 app.get(
-  "/api/payments/recent",
+  "/v1/payments/recent",
   asyncHandler(async (req, res) => {
     const items = await accountService.listRecentPayments(
       Number(req.query.limit || 20),
@@ -684,7 +665,7 @@ app.get(
 );
 
 app.get(
-  "/api/orders",
+  "/v1/orders",
   asyncHandler(async (req, res) => {
     const result = await accountService.listOrders(req.query);
     res.json({ success: true, ...result });
@@ -692,7 +673,7 @@ app.get(
 );
 
 app.get(
-  "/api/orders/recent",
+  "/v1/orders/recent",
   asyncHandler(async (req, res) => {
     const items = await accountService.listRecentOrders(
       Number(req.query.limit || 20),
@@ -702,7 +683,7 @@ app.get(
 );
 
 app.post(
-  "/api/accounts/:id/orders",
+  "/v1/accounts/:id/orders",
   asyncHandler(async (req, res) => {
     const order = await accountService.createOrder(
       Number(req.params.id),
@@ -713,7 +694,7 @@ app.post(
 );
 
 app.post(
-  "/api/accounts/:id/topups",
+  "/v1/accounts/:id/topups",
   asyncHandler(async (req, res) => {
     const result = await accountService.topup(Number(req.params.id), req.body);
     res.status(201).json({ success: true, ...result });
@@ -721,7 +702,7 @@ app.post(
 );
 
 app.get(
-  "/api/orders/:orderNo",
+  "/v1/orders/:orderNo",
   asyncHandler(async (req, res) => {
     const order = await accountService.getOrder(req.params.orderNo);
     res.json({ success: true, order });
@@ -729,7 +710,7 @@ app.get(
 );
 
 app.get(
-  "/api/orders/:orderId",
+  "/v1/orders/:orderId",
   asyncHandler(async (req, res) => {
     const orderId = Number(req.params.orderId);
     const order = await accountService.getOrderId(req.params.orderId);
@@ -737,7 +718,7 @@ app.get(
   }),
 );
 app.get(
-  "/api/dashboard/summary",
+  "/v1/dashboard/summary",
   asyncHandler(async (req, res) => {
     const result = await accountService.getDashboardSummary(
       Number(req.query.recentLimit || 20),
@@ -747,7 +728,7 @@ app.get(
 );
 
 app.get(
-  "/api/dashboard/health",
+  "/v1/dashboard/health",
   asyncHandler(async (req, res) => {
     const health = await accountService.getDashboardHealth();
     res.json({ success: true, ...health });
