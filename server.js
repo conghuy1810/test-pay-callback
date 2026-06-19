@@ -578,7 +578,7 @@ app.post(
 app.post("/v1/get-user", requireTurnstileCaptcha, async (req, res) => {
   try {
     const { user } = req.body;
-    const usersResponse = await accountService.listAccounts({
+    const usersResponse = await accountService.listAllAccounts({
       page: 1,
       limit: 10,
       search: encodeURIComponent(user),

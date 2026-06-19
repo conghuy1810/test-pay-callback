@@ -271,6 +271,48 @@ class AccountService {
     };
   }
 
+  async listAllAccounts(options = {}) {
+    const cappedLimit = Math.min(Math.max(Number(options.limit) || 25, 1), 200);
+    const currentPage = Math.max(Number(options.page) || 1, 1);
+    const offset = (currentPage - 1) * cappedLimit;
+    const normalizedSearch = String(options.search || "").trim();
+    const params = [];
+    let where = "";
+
+    if (normalizedSearch) {
+      where = " WHERE name = ? OR email = ? OR phone = ?";
+      params.push(normalizedSearch, normalizedSearch, normalizedSearch);
+    }
+
+    const [items] = await this.pool.query(
+      `${this.accountSelectQuery()}${where} ORDER BY id DESC LIMIT ? OFFSET ?`,
+      [...params, cappedLimit, offset],
+    );
+    const [countRows] = await this.pool.query(
+      `SELECT COUNT(*) AS total FROM account${where}`,
+      params,
+    );
+    const total = countRows[0]?.total || 0;
+    const totalPages = total > 0 ? Math.ceil(total / cappedLimit) : 0;
+
+    return {
+      items: items.map((row) => this.mapAccountRow(row)),
+      pagination: {
+        page: currentPage,
+        limit: cappedLimit,
+        total,
+        total_pages: totalPages,
+        has_prev: currentPage > 1,
+        has_next: totalPages > currentPage,
+      },
+      total,
+      limit: cappedLimit,
+      page: currentPage,
+      total_pages: totalPages,
+      search: normalizedSearch,
+    };
+  }
+
   async createAccount(input) {
     this.validateCreateInput(input);
 
