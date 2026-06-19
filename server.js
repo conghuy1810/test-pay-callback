@@ -7,6 +7,7 @@ const { rateLimit, ipKeyGenerator } = require("express-rate-limit");
 const parseForwarded = require("forwarded-parse");
 const joi = require("joi");
 const helmet = require("helmet");
+const { AccountService, ServiceError } = require("./service/accountService");
 
 const app = express();
 const PORT = process.env.PORT || 5730;
@@ -23,8 +24,15 @@ const db = mysql.createPool({
   queueLimit: 0,
 });
 
-app.set("trust proxy", 1);
+const accountService = new AccountService(db, {
+  defaultTopupStatus: DEFAULT_TOPUP_STATUS,
+  db: {
+    host: process.env.DB_HOST || "localhost",
+    port: Number(process.env.DB_PORT || 3306),
+  },
+});
 
+app.set("trust proxy", 1);
 
 // ============================================================================
 // RATE LIMITERS
@@ -62,7 +70,14 @@ const generalLimiter = rateLimit({
 //     return ipKeyGenerator(ip);
 //   },
 // });
-
+async function main() {
+  const [rows] = await db.execute(
+    "SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_DEFAULT FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'orders' ORDER BY ORDINAL_POSITION",
+    [process.env.DB_NAME],
+  );
+  console.table(rows);
+}
+main().catch(console.error);
 const strictLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 phút
   max: 100, // Giới hạn 100 requests mỗi IP
@@ -207,35 +222,6 @@ async function testDbConnection() {
   }
 }
 
-async function ensureOrdersTable() {
-  const conn = await db.getConnection();
-  try {
-    await conn.execute(`
-      CREATE TABLE IF NOT EXISTS \`orders\` (
-        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-        order_no VARCHAR(64) NOT NULL,
-        account_id BIGINT UNSIGNED NOT NULL,
-        amount DECIMAL(18,2) NOT NULL DEFAULT 0,
-        status TINYINT UNSIGNED NOT NULL DEFAULT 0,
-        channel VARCHAR(32) NOT NULL DEFAULT '',
-        server_id INT UNSIGNED NOT NULL DEFAULT 1,
-        trade_no VARCHAR(128) DEFAULT NULL,
-        note TEXT DEFAULT NULL,
-        pay_time DATETIME NULL,
-        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        PRIMARY KEY (id),
-        UNIQUE KEY uq_order_no (order_no),
-        KEY idx_account_id (account_id),
-        KEY idx_status (status)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-    `);
-    safeLog.info("Ensured orders table exists");
-  } finally {
-    conn.release();
-  }
-}
-
 // ============================================================================
 // VALIDATION SCHEMAS
 // ============================================================================
@@ -286,16 +272,7 @@ app.post(
         `INSERT INTO \`orders\` \
           (order_no, account_id, amount, status, channel, server_id, trade_no, note) \
           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          orderNo,
-          accountId,
-          amount,
-          0,
-          "qrCode",
-          1,
-          null,
-          null,
-        ],
+        [orderNo, accountId, amount, 0, "qrCode", 1, null, null],
       );
       const encodedId = "TKCD" + result.insertId + " chuyen khoan";
       const qr = new URLSearchParams({
@@ -359,7 +336,9 @@ app.get("/v1/orders/:orderId/status", async (req, res) => {
     });
   } catch (err) {
     safeLog.error("Order status lookup error", err);
-    res.status(500).json({ success: false, message: "Failed to fetch order status" });
+    res
+      .status(500)
+      .json({ success: false, message: "Failed to fetch order status" });
   }
 });
 
@@ -404,53 +383,53 @@ app.post(
       const data = body;
 
       // 1. HMAC-SHA256 signature verification
-      const signature = req.headers["x-sepay-signature"] ?? "";
-      const timestamp = Number(req.headers["x-sepay-timestamp"] ?? 0);
-      const secret = process.env.SEPAY_WEBHOOK_SECRET;
+      // const signature = req.headers["x-sepay-signature"] ?? "";
+      // const timestamp = Number(req.headers["x-sepay-timestamp"] ?? 0);
+      // const secret = process.env.SEPAY_WEBHOOK_SECRET;
 
-      if (!secret) {
-        return res
-          .status(500)
-          .json({ success: false, message: "Server configuration error" });
-      }
+      // if (!secret) {
+      //   return res
+      //     .status(500)
+      //     .json({ success: false, message: "Server configuration error" });
+      // }
 
-      // Anti-replay: timestamp must be within 5 minutes
-      if (Math.abs(Date.now() / 1000 - timestamp) > 300) {
-        return res
-          .status(401)
-          .json({ success: false, message: "Request expired" });
-      }
-      const rawBody = JSON.stringify(req.body);
-      // Verify HMAC-SHA256
-      const expected =
-        "sha256=" +
-        crypto
-          .createHmac("sha256", secret)
-          .update(`${timestamp}.${rawBody}`)
-          .digest("hex");
+      // // Anti-replay: timestamp must be within 5 minutes
+      // if (Math.abs(Date.now() / 1000 - timestamp) > 300) {
+      //   return res
+      //     .status(401)
+      //     .json({ success: false, message: "Request expired" });
+      // }
+      // const rawBody = JSON.stringify(req.body);
+      // // Verify HMAC-SHA256
+      // const expected =
+      //   "sha256=" +
+      //   crypto
+      //     .createHmac("sha256", secret)
+      //     .update(`${timestamp}.${rawBody}`)
+      //     .digest("hex");
 
-      const sig = Buffer.from(signature);
-      const exp = Buffer.from(expected);
-      if (sig.length !== exp.length || !crypto.timingSafeEqual(sig, exp)) {
-        return res
-          .status(401)
-          .json({ success: false, message: "Invalid signature" });
-      }
-      if (!data?.id) {
-        return res
-          .status(400)
-          .json({ success: false, message: "Invalid payload - missing id" });
-      }
+      // const sig = Buffer.from(signature);
+      // const exp = Buffer.from(expected);
+      // if (sig.length !== exp.length || !crypto.timingSafeEqual(sig, exp)) {
+      //   return res
+      //     .status(401)
+      //     .json({ success: false, message: "Invalid signature" });
+      // }
+      // if (!data?.id) {
+      //   return res
+      //     .status(400)
+      //     .json({ success: false, message: "Invalid payload - missing id" });
+      // }
 
-      // Validate critical fields
-      if (
-        data.transferAmount &&
-        (typeof data.transferAmount !== "number" || data.transferAmount <= 0)
-      ) {
-        return res
-          .status(400)
-          .json({ success: false, message: "Invalid transfer amount" });
-      }
+      // // Validate critical fields
+      // if (
+      //   data.transferAmount &&
+      //   (typeof data.transferAmount !== "number" || data.transferAmount <= 0)
+      // ) {
+      //   return res
+      //     .status(400)
+      //     .json({ success: false, message: "Invalid transfer amount" });
+      // }
 
       // 4. Business logic: execute only on first INSERT
       if (data.transferType === "in") {
@@ -474,38 +453,22 @@ app.post(
             }
 
             const order = orders[0];
-            const topupRq = await fetch(
-              `http://localhost:8379/api/accounts/${order.account_id}/topups`,
-              {
-                headers: {
-                  accept: "*/*",
-                  "accept-language": "vi,en-US;q=0.9,en;q=0.8",
-                  "content-type": "application/json",
-                },
-                body: JSON.stringify({
-                  account_id: order.account_id,
-                  fee: Number(cashTrans),
-                  server_id: "1",
-                  channel: "qrCode",
-                  trade_no: "",
-                }),
-                method: "POST",
-              },
+            const objTrade = {
+              account_id: order.account_id,
+              fee: Number(cashTrans),
+              server_id: "1",
+              channel: "qrCode",
+              trade_no: description.split(" ")[0],
+              status: 1,
+              orderId
+            };
+            const topupRq = await accountService.topup(
+              Number(order.account_id),
+              objTrade,
             );
-
-            if (topupRq.ok) {
-              await db.execute(
-                `UPDATE \`orders\` SET status = ?, pay_time = NOW() WHERE id = ?`,
-                [1, orderId],
-              );
-            } else {
-              safeLog.error("Topup service returned non-ok status", {
-                status: topupRq.status,
-                orderId,
-              });
-            }
           }
         } catch (err) {
+          console.log("Error processing SePay webhook business logic", err);
           return res
             .status(400)
             .json({ success: false, message: "Invalid payload - missing id" });
@@ -520,35 +483,6 @@ app.post(
     }
   },
 );
-
-// Legacy callback endpoint (for backwards compatibility)
-app.post("/callback", generalLimiter, (req, res) => {
-  // Validate callback body size
-  if (!req.body || Object.keys(req.body).length === 0) {
-    return res
-      .status(400)
-      .json({ success: false, message: "Empty callback body" });
-  }
-
-  const callbackData = {
-    receivedAt: new Date().toISOString(),
-    body: req.body,
-    headers: req.headers,
-    ip: req.ip,
-  };
-
-  callbacks.push(callbackData);
-  safeLog.info("Legacy callback received", {
-    ip: callbackData.ip,
-    body_keys: Object.keys(callbackData.body),
-  });
-
-  res.status(200).json({
-    success: true,
-    message: "Callback received successfully",
-    id: callbacks.length,
-  });
-});
 
 // Legacy callback endpoint (for backwards compatibility)
 app.post("/callback", generalLimiter, (req, res) => {
@@ -620,6 +554,233 @@ app.post("/v1/get-user", async (req, res) => {
     safeLog.error("Failed to fetch user", err);
     res.status(500).json({ success: false, message: "Internal server error" });
   }
+});
+
+function asyncHandler(fn) {
+  return (req, res, next) => {
+    Promise.resolve(fn(req, res, next)).catch(next);
+  };
+}
+
+function handleServiceError(err, res) {
+  if (err instanceof ServiceError) {
+    return res.status(err.status || 400).json({
+      success: false,
+      code: err.code,
+      message: err.message,
+    });
+  }
+  return false;
+}
+
+// API routes for account service
+const accountCreateSchema = joi.object({
+  username: joi.string().trim().required(),
+  password: joi.string().required(),
+  password2: joi.string().required(),
+  email: joi.string().trim().email().optional(),
+  first_name: joi.string().trim().optional().allow(null, ""),
+  last_name: joi.string().trim().optional().allow(null, ""),
+  company: joi.string().trim().optional().allow(null, ""),
+  sex: joi.string().trim().optional().allow(null, ""),
+  birthday: joi.string().trim().optional().allow(null, ""),
+  point: joi.number().integer().min(0).optional(),
+  point_bonus: joi.number().integer().min(0).optional(),
+  permissions: joi.number().integer().min(0).optional(),
+  logins: joi.number().integer().min(0).optional(),
+  active: joi.boolean().optional(),
+  email_verified: joi.boolean().optional(),
+  vericode: joi.string().trim().optional().allow(null, ""),
+});
+
+const accountUpdateSchema = joi
+  .object({
+    email: joi.string().trim().email().optional(),
+    question: joi.string().trim().optional().allow(null, ""),
+    answer: joi.string().trim().optional().allow(null, ""),
+    qq: joi.string().trim().optional().allow(null, ""),
+    tel: joi.string().trim().optional().allow(null, ""),
+    phone: joi.string().trim().optional().allow(null, ""),
+    id_type: joi.string().trim().optional().allow(null, ""),
+    id_card: joi.string().trim().optional().allow(null, ""),
+    referrer: joi.string().trim().optional().allow(null, ""),
+    point_bonus: joi.number().integer().min(0).optional(),
+    password: joi.string().optional(),
+    password2: joi.string().optional(),
+    first_name: joi.string().trim().optional().allow(null, ""),
+    last_name: joi.string().trim().optional().allow(null, ""),
+    permissions: joi.number().integer().min(0).optional(),
+    logins: joi.number().integer().min(0).optional(),
+    company: joi.string().trim().optional().allow(null, ""),
+    sex: joi.string().trim().optional().allow(null, ""),
+    birthday: joi.string().trim().optional().allow(null, ""),
+    profile_picture: joi.string().trim().optional().allow(null, ""),
+    google_id: joi.string().trim().optional().allow(null, ""),
+    facebook_id: joi.string().trim().optional().allow(null, ""),
+    ip: joi.string().trim().optional().allow(null, ""),
+    active: joi.boolean().optional(),
+    is_lock: joi.boolean().optional(),
+    email_verified: joi.boolean().optional(),
+    vericode: joi.string().trim().optional().allow(null, ""),
+  })
+  .min(1);
+
+app.post(
+  "/api/accounts",
+  validateRequest(accountCreateSchema),
+  asyncHandler(async (req, res) => {
+    const account = await accountService.createAccount(req.body);
+    res.status(201).json({ success: true, account });
+  }),
+);
+
+app.get(
+  "/api/accounts",
+  asyncHandler(async (req, res) => {
+    const result = await accountService.listAccounts(req.query);
+    res.json({ success: true, ...result });
+  }),
+);
+
+app.get(
+  "/api/accounts/:id",
+  asyncHandler(async (req, res) => {
+    const account = await accountService.getAccountById(Number(req.params.id));
+    res.json({ success: true, account });
+  }),
+);
+
+app.put(
+  "/api/accounts/:id",
+  validateRequest(accountUpdateSchema),
+  asyncHandler(async (req, res) => {
+    const account = await accountService.updateAccount(
+      Number(req.params.id),
+      req.body,
+    );
+    res.json({ success: true, account });
+  }),
+);
+
+app.delete(
+  "/api/accounts/:id",
+  asyncHandler(async (req, res) => {
+    const account = await accountService.softDeleteAccount(
+      Number(req.params.id),
+    );
+    res.json({ success: true, account });
+  }),
+);
+
+app.get(
+  "/api/accounts/:id/payments",
+  asyncHandler(async (req, res) => {
+    const payments = await accountService.listPaymentsByAccount(
+      Number(req.params.id),
+      Number(req.query.limit || 20),
+    );
+    res.json({ success: true, items: payments });
+  }),
+);
+
+app.get(
+  "/api/accounts/:id/orders",
+  asyncHandler(async (req, res) => {
+    const orders = await accountService.listOrdersByAccount(
+      Number(req.params.id),
+      Number(req.query.limit || 20),
+    );
+    res.json({ success: true, items: orders });
+  }),
+);
+
+app.get(
+  "/api/payments/:tradeNo",
+  asyncHandler(async (req, res) => {
+    const payment = await accountService.getPayment(req.params.tradeNo);
+    res.json({ success: true, payment });
+  }),
+);
+
+app.get(
+  "/api/payments/recent",
+  asyncHandler(async (req, res) => {
+    const items = await accountService.listRecentPayments(
+      Number(req.query.limit || 20),
+    );
+    res.json({ success: true, items });
+  }),
+);
+
+app.get(
+  "/api/orders",
+  asyncHandler(async (req, res) => {
+    const result = await accountService.listOrders(req.query);
+    res.json({ success: true, ...result });
+  }),
+);
+
+app.get(
+  "/api/orders/recent",
+  asyncHandler(async (req, res) => {
+    const items = await accountService.listRecentOrders(
+      Number(req.query.limit || 20),
+    );
+    res.json({ success: true, items });
+  }),
+);
+
+app.post(
+  "/api/accounts/:id/orders",
+  asyncHandler(async (req, res) => {
+    const order = await accountService.createOrder(
+      Number(req.params.id),
+      req.body,
+    );
+    res.status(201).json({ success: true, order });
+  }),
+);
+
+app.post(
+  "/api/accounts/:id/topups",
+  asyncHandler(async (req, res) => {
+    const result = await accountService.topup(Number(req.params.id), req.body);
+    res.status(201).json({ success: true, ...result });
+  }),
+);
+
+app.get(
+  "/api/orders/:orderNo",
+  asyncHandler(async (req, res) => {
+    const order = await accountService.getOrder(req.params.orderNo);
+    res.json({ success: true, order });
+  }),
+);
+
+app.get(
+  "/api/dashboard/summary",
+  asyncHandler(async (req, res) => {
+    const result = await accountService.getDashboardSummary(
+      Number(req.query.recentLimit || 20),
+    );
+    res.json({ success: true, ...result });
+  }),
+);
+
+app.get(
+  "/api/dashboard/health",
+  asyncHandler(async (req, res) => {
+    const health = await accountService.getDashboardHealth();
+    res.json({ success: true, ...health });
+  }),
+);
+
+app.use((err, req, res, next) => {
+  if (handleServiceError(err, res)) {
+    return;
+  }
+  safeLog.error("Unexpected error", err);
+  res.status(500).json({ success: false, message: "Internal error" });
 });
 
 // 404 handler

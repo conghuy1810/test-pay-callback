@@ -19,3 +19,15 @@ CREATE TABLE IF NOT EXISTS `orders` (
   KEY `idx_status` (`status`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+CREATE TABLE `pay` (
+  `trade_no` varchar(20) NOT NULL,
+  `channel` varchar(10) DEFAULT NULL,
+  `server_id` int(11) NOT NULL,
+  `account_id` int(11) NOT NULL,
+  `fee` int(11) NOT NULL,
+  `status` tinyint(4) NOT NULL,
+  `create_time` datetime NOT NULL,
+  `pay_time` datetime DEFAULT NULL,
+  PRIMARY KEY (`trade_no`),
+  KEY `trade_no` (`trade_no`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
