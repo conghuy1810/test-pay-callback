@@ -500,7 +500,7 @@ app.post("/v1/get-user", async (req, res) => {
 
     res.status(200).json({
       success: true,
-      id: usersResponse.items,
+      users: usersResponse.items,
     });
   } catch (err) {
     safeLog.error("Failed to fetch user", err);
