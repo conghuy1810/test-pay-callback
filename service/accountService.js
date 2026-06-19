@@ -499,7 +499,7 @@ class AccountService {
     const [rows] = await this.pool.query(`${this.orderSelectQueryById()}`, [
       Number(orderId),
     ]);
-    if (!rows.length) {
+    if (!rows) {
       throw new ServiceError("not_found", "resource not found", 404);
     }
     return this.mapOrderRow(rows[0]);

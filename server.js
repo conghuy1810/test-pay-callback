@@ -731,6 +731,7 @@ app.get(
 app.get(
   "/api/orders/:orderId",
   asyncHandler(async (req, res) => {
+    const orderId = Number(req.params.orderId);
     const order = await accountService.getOrderId(req.params.orderId);
     res.json({ success: true, order });
   }),
