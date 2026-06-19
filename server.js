@@ -70,14 +70,14 @@ const generalLimiter = rateLimit({
 //     return ipKeyGenerator(ip);
 //   },
 // });
-async function main() {
-  const [rows] = await db.execute(
-    "SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_DEFAULT FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'orders' ORDER BY ORDINAL_POSITION",
-    [process.env.DB_NAME],
-  );
-  console.table(rows);
-}
-main().catch(console.error);
+// async function main() {
+//   const [rows] = await db.execute(
+//     "SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_DEFAULT FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'orders' ORDER BY ORDINAL_POSITION",
+//     [process.env.DB_NAME],
+//   );
+//   console.table(rows);
+// }
+// main().catch(console.error);
 const strictLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 phút
   max: 100, // Giới hạn 100 requests mỗi IP
