@@ -169,9 +169,12 @@ app.use((req, res, next) => {
 });
 
 // SePay Configuration (set in .env)
-const SEPAY_ACCOUNT = "26254221";
-const SEPAY_BANK = "ACB";
+// const SEPAY_ACCOUNT = "26254221";
+// const SEPAY_BANK = "ACB";
 
+// vettinbank
+const SEPAY_ACCOUNT = "106887462694";
+const SEPAY_BANK = "ICB";
 // Logs for callback requests (in-memory for non-webhook callbacks)
 const callbacks = [];
 
