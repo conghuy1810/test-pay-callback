@@ -358,7 +358,10 @@ app.post(
           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         [orderNo, accountId, amount, 0, "qrCode", 1, null, null],
       );
-      const encodedId = "TKCD" + result.insertId + " chuyen khoan";
+      const encodedId =
+        SEPAY_BANK === "VietinBank"
+          ? "TKCD" + result.insertId + " SEVQR chuyen khoan"
+          : "TKCD" + result.insertId + " chuyen khoan";
       const qr = new URLSearchParams({
         acc: SEPAY_ACCOUNT,
         bank: SEPAY_BANK,
