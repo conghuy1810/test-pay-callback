@@ -174,7 +174,7 @@ app.use((req, res, next) => {
 
 // vettinbank
 const SEPAY_ACCOUNT = "106887462694";
-const SEPAY_BANK = "ICB";
+const SEPAY_BANK = "VietinBank";
 // Logs for callback requests (in-memory for non-webhook callbacks)
 const callbacks = [];
 
