@@ -473,6 +473,18 @@ class AccountService {
     `;
   }
 
+  orderSelectQueryById() {
+    return `
+      SELECT
+        o.id, o.order_no, o.account_id, o.amount, o.status, o.channel,
+        o.server_id, o.trade_no, o.note, o.pay_time,
+        a.name AS account_username
+      FROM orders o
+      LEFT JOIN account a ON a.id = o.account_id
+      WHERE o.id = ?
+    `;
+  }
+
   async getOrder(orderNo) {
     const [rows] = await this.pool.query(
       `${this.orderSelectQuery()} WHERE o.order_no = ? LIMIT 1`,
@@ -483,7 +495,15 @@ class AccountService {
     }
     return this.mapOrderRow(rows[0]);
   }
-
+  async getOrderId(orderId) {
+    const [rows] = await this.pool.query(`${this.orderSelectQueryById()}`, [
+      Number(orderId),
+    ]);
+    if (!rows.length) {
+      throw new ServiceError("not_found", "resource not found", 404);
+    }
+    return this.mapOrderRow(rows[0]);
+  }
   async listOrders(options = {}) {
     const cappedLimit = Math.min(Math.max(Number(options.limit) || 25, 1), 200);
     const currentPage = Math.max(Number(options.page) || 1, 1);

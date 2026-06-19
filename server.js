@@ -37,13 +37,13 @@ app.set("trust proxy", 1);
 // ============================================================================
 // RATE LIMITERS
 // ============================================================================
-const generalLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // limit each IP to 100 requests per windowMs
-  message: "Too many requests from this IP, please try again later.",
-  standardHeaders: true, // Return rate limit info in `RateLimit-*` headers
-  legacyHeaders: false,
-});
+// const generalLimiter = rateLimit({
+//   windowMs: 15 * 60 * 1000, // 15 minutes
+//   max: 100, // limit each IP to 100 requests per windowMs
+//   message: "Too many requests from this IP, please try again later.",
+//   standardHeaders: true, // Return rate limit info in `RateLimit-*` headers
+//   legacyHeaders: false,
+// });
 
 // const webhookLimiter = rateLimit({
 //   windowMs: 15 * 60 * 1000, // 15 phút
@@ -70,38 +70,38 @@ const generalLimiter = rateLimit({
 //     return ipKeyGenerator(ip);
 //   },
 // });
-async function main() {
-  const [rows] = await db.execute(
-    "SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_DEFAULT FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'orders' ORDER BY ORDINAL_POSITION",
-    [process.env.DB_NAME],
-  );
-  console.table(rows);
-}
-main().catch(console.error);
-const strictLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 phút
-  max: 100, // Giới hạn 100 requests mỗi IP
-  standardHeaders: true,
-  legacyHeaders: false,
+// async function main() {
+//   const [rows] = await db.execute(
+//     "SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_DEFAULT FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'orders' ORDER BY ORDINAL_POSITION",
+//     [process.env.DB_NAME],
+//   );
+//   console.table(rows);
+// }
+// main().catch(console.error);
+// const strictLimiter = rateLimit({
+//   windowMs: 15 * 60 * 1000, // 15 phút
+//   max: 100, // Giới hạn 100 requests mỗi IP
+//   standardHeaders: true,
+//   legacyHeaders: false,
 
-  // 🔥 THÊM ĐOẠN NÀY ĐỂ SỬA TRIỆT ĐỂ LỖI UNKNOWN:
-  keyGenerator: (req) => {
-    // 1. Lấy IP từ header X-Forwarded-For hoặc X-Real-IP do Nginx gửi sang
-    let ip = req.headers["x-forwarded-for"] || req.headers["x-real-ip"];
+//   // 🔥 THÊM ĐOẠN NÀY ĐỂ SỬA TRIỆT ĐỂ LỖI UNKNOWN:
+//   keyGenerator: (req) => {
+//     // 1. Lấy IP từ header X-Forwarded-For hoặc X-Real-IP do Nginx gửi sang
+//     let ip = req.headers["x-forwarded-for"] || req.headers["x-real-ip"];
 
-    // 2. Nếu Nginx gửi dạng chuỗi danh sách (IP1, IP2), lấy cái đầu tiên
-    if (ip && ip.includes(",")) {
-      ip = ip.split(",")[0];
-    }
+//     // 2. Nếu Nginx gửi dạng chuỗi danh sách (IP1, IP2), lấy cái đầu tiên
+//     if (ip && ip.includes(",")) {
+//       ip = ip.split(",")[0];
+//     }
 
-    // 3. Nếu vẫn không lấy được (hoặc bằng 'unknown'), fallback về IP kết nối trực tiếp hoặc chuỗi mặc định
-    if (!ip || ip === "unknown") {
-      ip = req.socket.remoteAddress || "local-fallback-ip";
-    }
+//     // 3. Nếu vẫn không lấy được (hoặc bằng 'unknown'), fallback về IP kết nối trực tiếp hoặc chuỗi mặc định
+//     if (!ip || ip === "unknown") {
+//       ip = req.socket.remoteAddress || "local-fallback-ip";
+//     }
 
-    return ip.trim();
-  },
-});
+//     return ip.trim();
+//   },
+// });
 // Middleware
 app.use(bodyParser.json({ limit: "1mb" })); // Limit payload size
 app.use(bodyParser.urlencoded({ extended: true, limit: "1mb" }));
@@ -134,7 +134,7 @@ app.use((req, res, next) => {
 });
 
 // Apply general rate limiter
-app.use(generalLimiter);
+// app.use(generalLimiter);
 
 // CORS support - restrict to common origins
 app.use((req, res, next) => {
@@ -259,7 +259,7 @@ const validateRequest = (schema) => (req, res, next) => {
 
 app.post(
   "/v1/orders",
-  strictLimiter,
+  // strictLimiter,
   validateRequest(orderSchema),
   async (req, res) => {
     try {
@@ -483,33 +483,6 @@ app.post(
 );
 
 // Legacy callback endpoint (for backwards compatibility)
-app.post("/callback", generalLimiter, (req, res) => {
-  // Validate callback body size
-  if (!req.body || Object.keys(req.body).length === 0) {
-    return res
-      .status(400)
-      .json({ success: false, message: "Empty callback body" });
-  }
-
-  const callbackData = {
-    receivedAt: new Date().toISOString(),
-    body: req.body,
-    headers: req.headers,
-    ip: req.ip,
-  };
-
-  callbacks.push(callbackData);
-  safeLog.info("Legacy callback received", {
-    ip: callbackData.ip,
-    body_keys: Object.keys(callbackData.body),
-  });
-
-  res.status(200).json({
-    success: true,
-    message: "Callback received successfully",
-    id: callbacks.length,
-  });
-});
 app.post("/v1/get-user", async (req, res) => {
   try {
     const { user } = req.body;
@@ -755,6 +728,13 @@ app.get(
   }),
 );
 
+app.get(
+  "/api/orders/:orderId",
+  asyncHandler(async (req, res) => {
+    const order = await accountService.getOrderId(req.params.orderId);
+    res.json({ success: true, order });
+  }),
+);
 app.get(
   "/api/dashboard/summary",
   asyncHandler(async (req, res) => {
