@@ -512,7 +512,12 @@ app.post(
           .status(400)
           .json({ success: false, message: "Invalid transfer amount" });
       }
-
+      console.log("Received SePay webhook", {
+        id: data.id,
+        transferType: data.transferType,
+        transferAmount: data.transferAmount,
+        content: data.content,
+      });
       // 4. Business logic: execute only on first INSERT
       if (data.transferType === "in") {
         // Update order status to 'paid'
