@@ -792,7 +792,7 @@ app.use((req, res) => {
 app.listen(PORT, async () => {
   try {
     await testDbConnection();
-    await ensureOrdersTable();
+    // await ensureOrdersTable();
   } catch (err) {
     safeLog.error("Database startup failed", err);
   }
