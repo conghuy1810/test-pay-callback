@@ -208,6 +208,10 @@ const safeLog = {
   },
 };
 
+const TURNSTILE_SECRET = process.env.TURNSTILE_SECRET;
+const TURNSTILE_VERIFY_URL =
+  "https://challenges.cloudflare.com/turnstile/v0/siteverify";
+
 async function testDbConnection() {
   const conn = await db.getConnection();
   try {
@@ -219,6 +223,82 @@ async function testDbConnection() {
     });
   } finally {
     conn.release();
+  }
+}
+
+function postForm(url, form) {
+  return new Promise((resolve, reject) => {
+    const payload = new URLSearchParams(form).toString();
+    const req = require("https").request(
+      url,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          "Content-Length": Buffer.byteLength(payload),
+        },
+      },
+      (res) => {
+        let body = "";
+        res.on("data", (chunk) => {
+          body += chunk;
+        });
+        res.on("end", () => {
+          try {
+            resolve(JSON.parse(body));
+          } catch (err) {
+            reject(err);
+          }
+        });
+      },
+    );
+
+    req.on("error", reject);
+    req.write(payload);
+    req.end();
+  });
+}
+
+async function verifyTurnstileToken(token, remoteIp) {
+  if (!TURNSTILE_SECRET) {
+    throw new Error("TURNSTILE_SECRET is not configured");
+  }
+
+  const response = await postForm(TURNSTILE_VERIFY_URL, {
+    secret: TURNSTILE_SECRET,
+    response: token,
+    remoteip: remoteIp || "",
+  });
+
+  return response;
+}
+
+async function requireTurnstileCaptcha(req, res, next) {
+  const token = req.body.turnstileToken;
+
+  if (!token) {
+    return res.status(400).json({
+      success: false,
+      message: "Captcha token is required",
+    });
+  }
+
+  try {
+    const result = await verifyTurnstileToken(token, req.ip);
+    if (!result.success) {
+      return res.status(403).json({
+        success: false,
+        message: "Captcha validation failed",
+        errors: result["error-codes"] || [],
+      });
+    }
+    next();
+  } catch (err) {
+    safeLog.error("Turnstile verification failed", err);
+    return res.status(500).json({
+      success: false,
+      message: "Captcha verification error",
+    });
   }
 }
 
@@ -259,6 +339,7 @@ const validateRequest = (schema) => (req, res, next) => {
 
 app.post(
   "/v1/orders",
+  requireTurnstileCaptcha,
   // strictLimiter,
   validateRequest(orderSchema),
   async (req, res) => {
@@ -381,53 +462,53 @@ app.post(
       const data = body;
 
       // 1. HMAC-SHA256 signature verification
-      // const signature = req.headers["x-sepay-signature"] ?? "";
-      // const timestamp = Number(req.headers["x-sepay-timestamp"] ?? 0);
-      // const secret = process.env.SEPAY_WEBHOOK_SECRET;
+      const signature = req.headers["x-sepay-signature"] ?? "";
+      const timestamp = Number(req.headers["x-sepay-timestamp"] ?? 0);
+      const secret = process.env.SEPAY_WEBHOOK_SECRET;
 
-      // if (!secret) {
-      //   return res
-      //     .status(500)
-      //     .json({ success: false, message: "Server configuration error" });
-      // }
+      if (!secret) {
+        return res
+          .status(500)
+          .json({ success: false, message: "Server configuration error" });
+      }
 
-      // // Anti-replay: timestamp must be within 5 minutes
-      // if (Math.abs(Date.now() / 1000 - timestamp) > 300) {
-      //   return res
-      //     .status(401)
-      //     .json({ success: false, message: "Request expired" });
-      // }
-      // const rawBody = JSON.stringify(req.body);
-      // // Verify HMAC-SHA256
-      // const expected =
-      //   "sha256=" +
-      //   crypto
-      //     .createHmac("sha256", secret)
-      //     .update(`${timestamp}.${rawBody}`)
-      //     .digest("hex");
+      // Anti-replay: timestamp must be within 5 minutes
+      if (Math.abs(Date.now() / 1000 - timestamp) > 300) {
+        return res
+          .status(401)
+          .json({ success: false, message: "Request expired" });
+      }
+      const rawBody = JSON.stringify(req.body);
+      // Verify HMAC-SHA256
+      const expected =
+        "sha256=" +
+        crypto
+          .createHmac("sha256", secret)
+          .update(`${timestamp}.${rawBody}`)
+          .digest("hex");
 
-      // const sig = Buffer.from(signature);
-      // const exp = Buffer.from(expected);
-      // if (sig.length !== exp.length || !crypto.timingSafeEqual(sig, exp)) {
-      //   return res
-      //     .status(401)
-      //     .json({ success: false, message: "Invalid signature" });
-      // }
-      // if (!data?.id) {
-      //   return res
-      //     .status(400)
-      //     .json({ success: false, message: "Invalid payload - missing id" });
-      // }
+      const sig = Buffer.from(signature);
+      const exp = Buffer.from(expected);
+      if (sig.length !== exp.length || !crypto.timingSafeEqual(sig, exp)) {
+        return res
+          .status(401)
+          .json({ success: false, message: "Invalid signature" });
+      }
+      if (!data?.id) {
+        return res
+          .status(400)
+          .json({ success: false, message: "Invalid payload - missing id" });
+      }
 
-      // // Validate critical fields
-      // if (
-      //   data.transferAmount &&
-      //   (typeof data.transferAmount !== "number" || data.transferAmount <= 0)
-      // ) {
-      //   return res
-      //     .status(400)
-      //     .json({ success: false, message: "Invalid transfer amount" });
-      // }
+      // Validate critical fields
+      if (
+        data.transferAmount &&
+        (typeof data.transferAmount !== "number" || data.transferAmount <= 0)
+      ) {
+        return res
+          .status(400)
+          .json({ success: false, message: "Invalid transfer amount" });
+      }
 
       // 4. Business logic: execute only on first INSERT
       if (data.transferType === "in") {
@@ -483,7 +564,7 @@ app.post(
 );
 
 // Legacy callback endpoint (for backwards compatibility)
-app.post("/v1/get-user", async (req, res) => {
+app.post("/v1/get-user", requireTurnstileCaptcha, async (req, res) => {
   try {
     const { user } = req.body;
     const usersResponse = await accountService.listAccounts({
