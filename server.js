@@ -339,7 +339,7 @@ const validateRequest = (schema) => (req, res, next) => {
 
 app.post(
   "/v1/orders",
-  requireTurnstileCaptcha,
+  // requireTurnstileCaptcha,
   // strictLimiter,
   validateRequest(orderSchema),
   async (req, res) => {
