@@ -744,11 +744,6 @@ class AccountService {
       );
 
       if (!update.affectedRows) {
-        console.log("Failed to update account points", {
-          accountId,
-          fee: input.fee,
-          update
-        });
         throw new ServiceError("not_found", "resource not found", update, 404);
       }
 
