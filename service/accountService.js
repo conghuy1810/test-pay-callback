@@ -742,8 +742,14 @@ class AccountService {
         "UPDATE account SET point = point + ?, last_confirm = NOW() WHERE id = ? AND active = 1 AND is_lock = 0",
         [Number(input.fee), accountId],
       );
+
       if (!update.affectedRows) {
-        throw new ServiceError("not_found", "resource not found", 404);
+        console.log("Failed to update account points", {
+          accountId,
+          fee: input.fee,
+          update
+        });
+        throw new ServiceError("not_found", "resource not found", update, 404);
       }
 
       if (paySchema.mode === "bridge") {
